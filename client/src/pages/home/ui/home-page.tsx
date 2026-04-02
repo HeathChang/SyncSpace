@@ -11,7 +11,7 @@ import {
   mockUsers,
   upcomingItems,
 } from "@/shared/lib/mock-data";
-import useSocket from "@/shared/hooks/useSocket";
+import { useSocket } from "@/shared/socket/useSocket";
 import { MainDashboard } from "@/widgets/main-dashboard/ui/main-dashboard";
 import { WorkspaceHeader } from "@/widgets/workspace-header/ui/workspace-header";
 
@@ -21,7 +21,7 @@ export function HomePage() {
   const [selectedRoomId, setSelectedRoomId] = useState(mockRooms[0].id);
   const [messages, setMessages] = useState<ChatMessage[]>(mockMessages);
   const [cards, setCards] = useState<BoardCard[]>(mockBoardCards);
-  const { connection, setConnection } = useSocket();
+  const { connection } = useSocket();
 
   const selectedRoom = useMemo(
     () => mockRooms.find((room) => room.id === selectedRoomId) ?? mockRooms[0],
@@ -50,16 +50,6 @@ export function HomePage() {
         createdAt: "지금",
       },
     ]);
-  };
-
-  const handleReconnect = () => {
-    setConnection((prev) => ({
-      ...prev,
-      isConnected: true,
-      reconnectAttempts: prev.reconnectAttempts + 1,
-      latencyMs: Math.max(18, Math.floor(Math.random() * 80)),
-      lastConnectedAt: "방금 전",
-    }));
   };
 
   const handleMoveCard = (cardId: string) => {
@@ -105,29 +95,34 @@ export function HomePage() {
 
   return (
     <main className="app-shell">
-      <WorkspaceHeader
-        currentRoom={selectedRoom}
-        users={mockUsers}
-        connection={connection}
-      />
-
-      <MainDashboard
-        rooms={mockRooms}
-        selectedRoomId={selectedRoomId}
-        selectedRoom={selectedRoom}
-        roomMessages={roomMessages}
-        users={mockUsers}
-        columns={boardColumns}
-        cards={cards}
-        connection={connection}
-        upcomingItems={upcomingItems}
-        onSelectRoom={setSelectedRoomId}
-        onSendMessage={handleSendMessage}
-        onReconnect={handleReconnect}
-        onCreateCard={handleCreateCard}
-        onMoveCard={handleMoveCard}
-        onDeleteCard={handleDeleteCard}
-      />
+      허허
     </main>
+    // <main className="app-shell">
+    //   <WorkspaceHeader
+    //     currentRoom={selectedRoom}
+    //     users={mockUsers}
+    //     connection={connection}
+    //   />
+
+    //   <MainDashboard
+    //     rooms={mockRooms}
+    //     selectedRoomId={selectedRoomId}
+    //     selectedRoom={selectedRoom}
+    //     roomMessages={roomMessages}
+    //     users={mockUsers}
+    //     columns={boardColumns}
+    //     cards={cards}
+    //     connection={connection}
+    //     upcomingItems={upcomingItems}
+    //     onSelectRoom={setSelectedRoomId}
+    //     onSendMessage={handleSendMessage}
+    //     onReconnect={handleReconnect}
+    //     onCreateCard={handleCreateCard}
+    //     onMoveCard={handleMoveCard}
+    //     onDeleteCard={handleDeleteCard}
+    //   />
+    // </main>
   );
 }
+
+export default HomePage;
