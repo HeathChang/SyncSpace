@@ -16,6 +16,8 @@ import { useSocket } from "@/shared/socket/useSocket";
 import { useSocketEvent } from "@/shared/socket/useSocketEvent";
 import { MainDashboard } from "@/widgets/main-dashboard/ui/main-dashboard";
 import { WorkspaceHeader } from "@/widgets/workspace-header/ui/workspace-header";
+import { useSocketEmit } from "@/shared/socket/useSocketEmit";
+import { eClientToServerEvents, eServerToClientEvents } from "@/shared/socket/socket.type";
 
 const currentUserId = "u2";
 const activeNowText = "방금 전";
@@ -30,11 +32,12 @@ const hasUserId = (data: unknown): data is { userId: string } => {
 };
 
 export function HomePage() {
-  const [selectedRoomId, setSelectedRoomId] = useState(mockRooms[0].id);
-  const [messages, setMessages] = useState<ChatMessage[]>(mockMessages);
-  const [cards, setCards] = useState<BoardCard[]>(mockBoardCards);
-  const [users, setUsers] = useState<WorkspaceUser[]>(mockUsers);
-  const { socket, connection } = useSocket();
+  const [selectedRoomId, setSelectedRoomId] = useState(mockRooms[0].id); // 선택된 방의 ID
+  const [messages, setMessages] = useState<ChatMessage[]>(mockMessages); // 메시지 목록
+  const [cards, setCards] = useState<BoardCard[]>(mockBoardCards); // 카드 목록
+  const [users, setUsers] = useState<WorkspaceUser[]>(mockUsers); // 사용자 목록
+  const { socket, connection } = useSocket(); // 소켓 연결 상태
+  const { emit } = useSocketEmit(); // 소켓 이벤트 발신
 
   const setUserStatus = useCallback((userId: string, status: PresenceStatus) => {
     setUsers((prev) =>
@@ -72,26 +75,26 @@ export function HomePage() {
     [setUserStatus],
   );
 
-  useSocketEvent({ event: "user:online", handler: handleUserOnline });
-  useSocketEvent({ event: "user:offline", handler: handleUserOffline });
+  useSocketEvent({ event: eServerToClientEvents.USER_ONLINE, handler: handleUserOnline });
+  useSocketEvent({ event: eServerToClientEvents.USER_OFFLINE, handler: handleUserOffline });
 
   useEffect(() => {
     if (connection.isConnected) {
-      socket.emit("user:join", { userId: currentUserId });
+      emit(eClientToServerEvents.USER_JOIN, { userId: currentUserId });
     }
-  }, [connection.isConnected, socket]);
+  }, [connection.isConnected, emit]);
 
   useEffect(() => {
     if (!connection.isConnected) {
       return;
     }
 
-    socket.emit("room:join", { roomId: selectedRoomId });
+    emit(eClientToServerEvents.ROOM_JOIN, { roomId: selectedRoomId });
 
     return () => {
-      socket.emit("room:leave", { roomId: selectedRoomId });
+      emit(eClientToServerEvents.ROOM_LEAVE, { roomId: selectedRoomId });
     };
-  }, [connection.isConnected, selectedRoomId, socket]);
+  }, [connection.isConnected, selectedRoomId, emit]);
 
   const selectedRoom = useMemo(
     () => mockRooms.find((room) => room.id === selectedRoomId) ?? mockRooms[0],
@@ -127,7 +130,7 @@ export function HomePage() {
       return;
     }
 
-    socket.emit("message:send", {
+    emit(eClientToServerEvents.MESSAGE_SEND, {
       roomId: selectedRoom.id,
       message: trimmed,
     });

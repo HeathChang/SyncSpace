@@ -2,15 +2,8 @@ import cors from "cors";
 import express from "express";
 import http from "http";
 import { Server, type Socket } from "socket.io";
-
-interface ClientToServerEvents {
-    "user:join": { userId: string };
-}
-
-interface ServerToClientEvents {
-    "user:online": { userId: string };
-    "user:offline": { userId: string };
-}
+import { eClientToServerEvents, eServerToClientEvents } from "./socket.types";
+import { ClientToServerEvents, ServerToClientEvents } from "./socket.types";
 
 const app = express();
 app.use(cors({ origin: ["http://localhost:3000"], credentials: true }));
@@ -26,18 +19,18 @@ const io = new Server<ClientToServerEvents, ServerToClientEvents>(server, {
 io.on("connection", (socket: Socket) => {
     console.log("a user connected", socket.id);
 
-    socket.on("user:join", ({ userId }) => {
+    socket.on(eClientToServerEvents.USER_JOIN, ({ userId }) => {
         socket.data.userId = userId;
-        socket.broadcast.emit("user:online", { userId });
-        console.log(`user joined: ${userId} (${socket.id})`);
+        socket.broadcast.emit(eServerToClientEvents.USER_ONLINE, { userId });
+        console.log(`user ${userId} joined (socketId: ${socket.id})`);
     });
 
     socket.on("disconnect", (reason) => {
         const userId = socket.data.userId as string | undefined;
-        console.log("a user disconnected", socket.id, reason);
+        console.log(`user ${userId} disconnected (socketId: ${socket.id})`);
 
         if (userId) {
-            socket.broadcast.emit("user:offline", { userId });
+            socket.broadcast.emit(eServerToClientEvents.USER_OFFLINE, { userId });
         }
     });
 });
