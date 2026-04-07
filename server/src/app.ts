@@ -1,7 +1,7 @@
 import cors from "cors";
 import express from "express";
 import http from "http";
-import { Server, type Socket } from "socket.io";
+import { Server } from "socket.io";
 import { eClientToServerEvents, eServerToClientEvents } from "./socket.types";
 import { ClientToServerEvents, ServerToClientEvents } from "./socket.types";
 
@@ -16,7 +16,7 @@ const io = new Server<ClientToServerEvents, ServerToClientEvents>(server, {
     },
 });
 
-io.on("connection", (socket: Socket) => {
+io.on("connection", (socket) => {
     console.log("a user connected", socket.id);
 
     socket.on(eClientToServerEvents.USER_JOIN, ({ userId }) => {
@@ -25,7 +25,41 @@ io.on("connection", (socket: Socket) => {
         console.log(`user ${userId} joined (socketId: ${socket.id})`);
     });
 
-    socket.on("disconnect", (reason) => {
+    socket.on(eClientToServerEvents.ROOM_JOIN, ({ roomId }) => {
+        if (!roomId) {
+            return;
+        }
+
+        socket.join(roomId);
+        console.log(`socket ${socket.id} joined room ${roomId}`);
+    });
+
+    socket.on(eClientToServerEvents.ROOM_LEAVE, ({ roomId }) => {
+        if (!roomId) {
+            return;
+        }
+
+        socket.leave(roomId);
+        console.log(`socket ${socket.id} left room ${roomId}`);
+    });
+
+    socket.on(eClientToServerEvents.MESSAGE_SEND, ({ roomId, message }) => {
+        const userId = socket.data.userId as string | undefined;
+        const trimmedMessage = message.trim();
+
+        if (!roomId || !userId || !trimmedMessage) {
+            return;
+        }
+
+        io.to(roomId).emit(eServerToClientEvents.MESSAGE_NEW, {
+            roomId,
+            userId,
+            message: trimmedMessage,
+            timestamp: new Date().toISOString(),
+        });
+    });
+
+    socket.on("disconnect", () => {
         const userId = socket.data.userId as string | undefined;
         console.log(`user ${userId} disconnected (socketId: ${socket.id})`);
 

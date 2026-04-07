@@ -17,10 +17,27 @@ export enum eClientToServerEvents {
 
 
 export interface ClientToServerEvents {
-    "user:join": { userId: string };
+    [eClientToServerEvents.USER_JOIN]: (payload: { userId: string }) => void;
+    [eClientToServerEvents.MESSAGE_SEND]: (payload: { roomId: string; message: string }) => void;
+    [eClientToServerEvents.BOARD_CREATE]: (payload: { roomId: string; title: string }) => void;
+    [eClientToServerEvents.BOARD_MOVE]: (payload: {
+        roomId: string;
+        cardId: string;
+        toColumn: string;
+    }) => void;
+    [eClientToServerEvents.CURSOR_MOVE]: (payload: { x: number; y: number }) => void;
+    [eClientToServerEvents.ROOM_JOIN]: (payload: { roomId: string }) => void;
+    [eClientToServerEvents.ROOM_LEAVE]: (payload: { roomId: string }) => void;
 }
 
 export interface ServerToClientEvents {
-    "user:online": { userId: string };
-    "user:offline": { userId: string };
+    [eServerToClientEvents.USER_ONLINE]: (payload: { userId: string }) => void;
+    [eServerToClientEvents.USER_OFFLINE]: (payload: { userId: string }) => void;
+    [eServerToClientEvents.MESSAGE_NEW]: (payload: {
+        roomId: string;
+        userId: string;
+        message: string;
+        timestamp: string;
+    }) => void;
+    [eServerToClientEvents.BOARD_UPDATED]: (payload: { roomId: string }) => void;
 }
