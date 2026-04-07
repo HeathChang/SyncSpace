@@ -19,7 +19,12 @@ export enum eClientToServerEvents {
 export interface ServerToClientEvents {
     [eServerToClientEvents.USER_ONLINE]: { userId: string };
     [eServerToClientEvents.USER_OFFLINE]: { userId: string };
-    [eServerToClientEvents.MESSAGE_NEW]: { roomId: string; userId: string; message: string };
+    [eServerToClientEvents.MESSAGE_NEW]: {
+        roomId: string;
+        userId: string;
+        message: string;
+        timestamp: string;
+    };
     [eServerToClientEvents.BOARD_UPDATED]: { roomId: string };
 }
 

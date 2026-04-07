@@ -31,6 +31,41 @@ const hasUserId = (data: unknown): data is { userId: string } => {
   );
 };
 
+const hasMessagePayload = (
+  data: unknown,
+): data is {
+  roomId: string;
+  userId: string;
+  message: string;
+  timestamp: string;
+} => {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    "roomId" in data &&
+    typeof (data as { roomId: unknown }).roomId === "string" &&
+    "userId" in data &&
+    typeof (data as { userId: unknown }).userId === "string" &&
+    "message" in data &&
+    typeof (data as { message: unknown }).message === "string" &&
+    "timestamp" in data &&
+    typeof (data as { timestamp: unknown }).timestamp === "string"
+  );
+};
+
+const formatMessageTime = (timestamp: string) => {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    return "지금";
+  }
+
+  return date.toLocaleTimeString("ko-KR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+};
+
 export function HomePage() {
   const [selectedRoomId, setSelectedRoomId] = useState(mockRooms[0].id); // 선택된 방의 ID
   const [messages, setMessages] = useState<ChatMessage[]>(mockMessages); // 메시지 목록
@@ -75,8 +110,33 @@ export function HomePage() {
     [setUserStatus],
   );
 
+  const handleMessageNew = useCallback(
+    (payload: unknown) => {
+      if (!hasMessagePayload(payload)) {
+        return;
+      }
+
+      const authorName =
+        users.find((user) => user.id === payload.userId)?.name ?? "알 수 없음";
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          roomId: payload.roomId,
+          authorId: payload.userId,
+          authorName,
+          content: payload.message,
+          createdAt: formatMessageTime(payload.timestamp),
+        },
+      ]);
+    },
+    [users],
+  );
+
   useSocketEvent({ event: eServerToClientEvents.USER_ONLINE, handler: handleUserOnline });
   useSocketEvent({ event: eServerToClientEvents.USER_OFFLINE, handler: handleUserOffline });
+  useSocketEvent({ event: eServerToClientEvents.MESSAGE_NEW, handler: handleMessageNew });
 
   useEffect(() => {
     if (connection.isConnected) {
@@ -134,18 +194,6 @@ export function HomePage() {
       roomId: selectedRoom.id,
       message: trimmed,
     });
-
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: crypto.randomUUID(),
-        roomId: selectedRoom.id,
-        authorId: currentUserId,
-        authorName: "박서연",
-        content: trimmed,
-        createdAt: "지금",
-      },
-    ]);
   };
 
   const handleReconnect = useCallback(() => {
