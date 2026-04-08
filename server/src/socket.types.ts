@@ -1,6 +1,7 @@
 export enum eServerToClientEvents {
     USER_ONLINE = "user:online",
     USER_OFFLINE = "user:offline",
+    PRESENCE_SNAPSHOT = "presence:snapshot",
     MESSAGE_NEW = "message:new",
     BOARD_UPDATED = "board:updated",
 }
@@ -33,6 +34,7 @@ export interface ClientToServerEvents {
 export interface ServerToClientEvents {
     [eServerToClientEvents.USER_ONLINE]: (payload: { userId: string }) => void;
     [eServerToClientEvents.USER_OFFLINE]: (payload: { userId: string }) => void;
+    [eServerToClientEvents.PRESENCE_SNAPSHOT]: (payload: { userIds: string[] }) => void;
     [eServerToClientEvents.MESSAGE_NEW]: (payload: {
         roomId: string;
         userId: string;
