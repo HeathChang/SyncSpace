@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BoardCard } from "@/entities/board/model/types";
 import type { ChatMessage } from "@/entities/message/model/types";
 import type { PresenceStatus, WorkspaceUser } from "@/entities/user/model/types";
@@ -18,6 +18,7 @@ import { MainDashboard } from "@/widgets/main-dashboard/ui/main-dashboard";
 import { WorkspaceHeader } from "@/widgets/workspace-header/ui/workspace-header";
 import { useSocketEmit } from "@/shared/socket/useSocketEmit";
 import { eClientToServerEvents, eServerToClientEvents } from "@/shared/socket/socket.type";
+import { useQueueStack } from "@/shared/socket/useQueueStack";
 
 const currentUserId = "u2";
 const activeNowText = "방금 전";
@@ -53,6 +54,27 @@ const hasMessagePayload = (
   );
 };
 
+type MessagePayload = {
+  roomId: string;
+  userId: string;
+  message: string;
+  timestamp: string;
+};
+
+const hasPresenceSnapshotPayload = (
+  data: unknown,
+): data is {
+  userIds: string[];
+} => {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    "userIds" in data &&
+    Array.isArray((data as { userIds: unknown }).userIds) &&
+    (data as { userIds: unknown[] }).userIds.every((userId) => typeof userId === "string")
+  );
+};
+
 const formatMessageTime = (timestamp: string) => {
   const date = new Date(timestamp);
   if (Number.isNaN(date.getTime())) {
@@ -73,6 +95,33 @@ export function HomePage() {
   const [users, setUsers] = useState<WorkspaceUser[]>(mockUsers); // 사용자 목록
   const { socket, connection } = useSocket(); // 소켓 연결 상태
   const { emit } = useSocketEmit(); // 소켓 이벤트 발신
+  const usersRef = useRef(users);
+
+  useEffect(() => {
+    usersRef.current = users;
+  }, [users]);
+
+  const processQueuedMessage = useCallback((nextMessage: MessagePayload) => {
+    const authorName =
+      usersRef.current.find((user) => user.id === nextMessage.userId)?.name ?? "알 수 없음";
+
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: crypto.randomUUID(),
+        roomId: nextMessage.roomId,
+        authorId: nextMessage.userId,
+        authorName,
+        content: nextMessage.message,
+        createdAt: formatMessageTime(nextMessage.timestamp),
+      },
+    ]);
+  }, []);
+
+  const { enqueue } = useQueueStack<MessagePayload>({
+    onDequeue: processQueuedMessage,
+    intervalMs: 300,
+  });
 
   const setUserStatus = useCallback((userId: string, status: PresenceStatus) => {
     setUsers((prev) =>
@@ -116,26 +165,39 @@ export function HomePage() {
         return;
       }
 
-      const authorName =
-        users.find((user) => user.id === payload.userId)?.name ?? "알 수 없음";
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          roomId: payload.roomId,
-          authorId: payload.userId,
-          authorName,
-          content: payload.message,
-          createdAt: formatMessageTime(payload.timestamp),
-        },
-      ]);
+      enqueue(payload);
     },
-    [users],
+    [enqueue],
   );
+
+  const handlePresenceSnapshot = useCallback((payload: unknown) => {
+    if (!hasPresenceSnapshotPayload(payload)) {
+      return;
+    }
+
+    const onlineUserIds = new Set(payload.userIds);
+    setUsers((prev) =>
+      prev.map((user) =>
+        onlineUserIds.has(user.id)
+          ? {
+              ...user,
+              status: "online",
+              lastActiveAt: activeNowText,
+            }
+          : {
+              ...user,
+              status: "offline",
+            },
+      ),
+    );
+  }, []);
 
   useSocketEvent({ event: eServerToClientEvents.USER_ONLINE, handler: handleUserOnline });
   useSocketEvent({ event: eServerToClientEvents.USER_OFFLINE, handler: handleUserOffline });
+  useSocketEvent({
+    event: eServerToClientEvents.PRESENCE_SNAPSHOT,
+    handler: handlePresenceSnapshot,
+  });
   useSocketEvent({ event: eServerToClientEvents.MESSAGE_NEW, handler: handleMessageNew });
 
   useEffect(() => {
