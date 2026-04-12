@@ -52,6 +52,7 @@ const removeUserSocket = (socketId: string) => {
 };
 
 const getOnlineUserIds = () => [...userToSocketIds.keys()];
+const boardColumns = new Set(["todo", "inProgress", "done"]);
 
 io.on("connection", (socket) => {
     console.log("a user connected", socket.id);
@@ -111,6 +112,56 @@ io.on("connection", (socket) => {
             userId,
             message: trimmedMessage,
             timestamp: new Date().toISOString(),
+        });
+    });
+
+    socket.on(
+        eClientToServerEvents.BOARD_CREATE,
+        ({ roomId, cardId, title, assigneeId, tags }) => {
+            const trimmedTitle = title.trim();
+
+            if (!roomId || !cardId || !assigneeId || !trimmedTitle) {
+                return;
+            }
+
+            io.to(roomId).emit(eServerToClientEvents.BOARD_UPDATED, {
+                roomId,
+                action: "create",
+                card: {
+                    id: cardId,
+                    title: trimmedTitle,
+                    assigneeId,
+                    column: "todo",
+                    updatedAt: "방금 전",
+                    tags: tags.length > 0 ? tags : ["신규"],
+                },
+            });
+        },
+    );
+
+    socket.on(eClientToServerEvents.BOARD_MOVE, ({ roomId, cardId, toColumn }) => {
+        if (!roomId || !cardId || !boardColumns.has(toColumn)) {
+            return;
+        }
+
+        io.to(roomId).emit(eServerToClientEvents.BOARD_UPDATED, {
+            roomId,
+            action: "move",
+            cardId,
+            toColumn,
+            updatedAt: "방금 전",
+        });
+    });
+
+    socket.on(eClientToServerEvents.BOARD_DELETE, ({ roomId, cardId }) => {
+        if (!roomId || !cardId) {
+            return;
+        }
+
+        io.to(roomId).emit(eServerToClientEvents.BOARD_UPDATED, {
+            roomId,
+            action: "delete",
+            cardId,
         });
     });
 

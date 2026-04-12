@@ -11,6 +11,7 @@ export enum eClientToServerEvents {
     MESSAGE_SEND = "message:send",
     BOARD_CREATE = "board:create",
     BOARD_MOVE = "board:move",
+    BOARD_DELETE = "board:delete",
     CURSOR_MOVE = "cursor:move",
     ROOM_JOIN = "room:join",
     ROOM_LEAVE = "room:leave",
@@ -20,12 +21,19 @@ export enum eClientToServerEvents {
 export interface ClientToServerEvents {
     [eClientToServerEvents.USER_JOIN]: (payload: { userId: string }) => void;
     [eClientToServerEvents.MESSAGE_SEND]: (payload: { roomId: string; message: string }) => void;
-    [eClientToServerEvents.BOARD_CREATE]: (payload: { roomId: string; title: string }) => void;
+    [eClientToServerEvents.BOARD_CREATE]: (payload: {
+        roomId: string;
+        cardId: string;
+        title: string;
+        assigneeId: string;
+        tags: string[];
+    }) => void;
     [eClientToServerEvents.BOARD_MOVE]: (payload: {
         roomId: string;
         cardId: string;
-        toColumn: string;
+        toColumn: "todo" | "inProgress" | "done";
     }) => void;
+    [eClientToServerEvents.BOARD_DELETE]: (payload: { roomId: string; cardId: string }) => void;
     [eClientToServerEvents.CURSOR_MOVE]: (payload: { x: number; y: number }) => void;
     [eClientToServerEvents.ROOM_JOIN]: (payload: { roomId: string }) => void;
     [eClientToServerEvents.ROOM_LEAVE]: (payload: { roomId: string }) => void;
@@ -41,5 +49,29 @@ export interface ServerToClientEvents {
         message: string;
         timestamp: string;
     }) => void;
-    [eServerToClientEvents.BOARD_UPDATED]: (payload: { roomId: string }) => void;
+    [eServerToClientEvents.BOARD_UPDATED]: (payload:
+        | {
+            roomId: string;
+            action: "create";
+            card: {
+                id: string;
+                title: string;
+                assigneeId: string;
+                column: "todo" | "inProgress" | "done";
+                updatedAt: string;
+                tags: string[];
+            };
+        }
+        | {
+            roomId: string;
+            action: "move";
+            cardId: string;
+            toColumn: "todo" | "inProgress" | "done";
+            updatedAt: string;
+        }
+        | {
+            roomId: string;
+            action: "delete";
+            cardId: string;
+        }) => void;
 }
