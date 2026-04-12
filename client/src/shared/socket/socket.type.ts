@@ -11,6 +11,7 @@ export enum eClientToServerEvents {
     MESSAGE_SEND = "message:send",
     BOARD_CREATE = "board:create",
     BOARD_MOVE = "board:move",
+    BOARD_DELETE = "board:delete",
     CURSOR_MOVE = "cursor:move",
     ROOM_JOIN = "room:join",
     ROOM_LEAVE = "room:leave",
@@ -27,15 +28,50 @@ export interface ServerToClientEvents {
         message: string;
         timestamp: string;
     };
-    [eServerToClientEvents.BOARD_UPDATED]: { roomId: string };
+    [eServerToClientEvents.BOARD_UPDATED]:
+        | {
+            roomId: string;
+            action: "create";
+            card: {
+                id: string;
+                title: string;
+                assigneeId: string;
+                column: "todo" | "inProgress" | "done";
+                updatedAt: string;
+                tags: string[];
+            };
+        }
+        | {
+            roomId: string;
+            action: "move";
+            cardId: string;
+            toColumn: "todo" | "inProgress" | "done";
+            updatedAt: string;
+        }
+        | {
+            roomId: string;
+            action: "delete";
+            cardId: string;
+        };
 }
 
 // Client to Server Events
 export interface ClientToServerEvents {
     [eClientToServerEvents.USER_JOIN]: { userId: string };
     [eClientToServerEvents.MESSAGE_SEND]: { roomId: string; message: string };
-    [eClientToServerEvents.BOARD_CREATE]: { roomId: string; title: string };
-    [eClientToServerEvents.BOARD_MOVE]: { roomId: string; cardId: string; toColumn: string };
+    [eClientToServerEvents.BOARD_CREATE]: {
+        roomId: string;
+        cardId: string;
+        title: string;
+        assigneeId: string;
+        tags: string[];
+    };
+    [eClientToServerEvents.BOARD_MOVE]: {
+        roomId: string;
+        cardId: string;
+        toColumn: "todo" | "inProgress" | "done";
+    };
+    [eClientToServerEvents.BOARD_DELETE]: { roomId: string; cardId: string };
     [eClientToServerEvents.CURSOR_MOVE]: { x: number; y: number };
     [eClientToServerEvents.ROOM_JOIN]: { roomId: string };
     [eClientToServerEvents.ROOM_LEAVE]: { roomId: string };

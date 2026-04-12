@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { BoardCard } from "@/entities/board/model/types";
+import type { BoardCard, BoardColumnId } from "@/entities/board/model/types";
 import type { ChatMessage } from "@/entities/message/model/types";
 import type { PresenceStatus, WorkspaceUser } from "@/entities/user/model/types";
 import {
@@ -61,6 +61,25 @@ type MessagePayload = {
   timestamp: string;
 };
 
+type BoardUpdatedPayload =
+  | {
+      roomId: string;
+      action: "create";
+      card: BoardCard;
+    }
+  | {
+      roomId: string;
+      action: "move";
+      cardId: string;
+      toColumn: BoardColumnId;
+      updatedAt: string;
+    }
+  | {
+      roomId: string;
+      action: "delete";
+      cardId: string;
+    };
+
 const hasPresenceSnapshotPayload = (
   data: unknown,
 ): data is {
@@ -73,6 +92,58 @@ const hasPresenceSnapshotPayload = (
     Array.isArray((data as { userIds: unknown }).userIds) &&
     (data as { userIds: unknown[] }).userIds.every((userId) => typeof userId === "string")
   );
+};
+
+const isBoardColumn = (value: unknown): value is BoardColumnId =>
+  value === "todo" || value === "inProgress" || value === "done";
+
+const hasBoardUpdatedPayload = (data: unknown): data is BoardUpdatedPayload => {
+  if (typeof data !== "object" || data === null || !("roomId" in data) || !("action" in data)) {
+    return false;
+  }
+
+  const action = (data as { action: unknown }).action;
+  const roomId = (data as { roomId: unknown }).roomId;
+  if (typeof roomId !== "string") {
+    return false;
+  }
+
+  if (action === "create") {
+    const card = (data as { card?: unknown }).card;
+    return (
+      typeof card === "object" &&
+      card !== null &&
+      "id" in card &&
+      typeof (card as { id: unknown }).id === "string" &&
+      "title" in card &&
+      typeof (card as { title: unknown }).title === "string" &&
+      "assigneeId" in card &&
+      typeof (card as { assigneeId: unknown }).assigneeId === "string" &&
+      "column" in card &&
+      isBoardColumn((card as { column: unknown }).column) &&
+      "updatedAt" in card &&
+      typeof (card as { updatedAt: unknown }).updatedAt === "string" &&
+      "tags" in card &&
+      Array.isArray((card as { tags: unknown }).tags)
+    );
+  }
+
+  if (action === "move") {
+    return (
+      "cardId" in data &&
+      typeof (data as { cardId: unknown }).cardId === "string" &&
+      "toColumn" in data &&
+      isBoardColumn((data as { toColumn: unknown }).toColumn) &&
+      "updatedAt" in data &&
+      typeof (data as { updatedAt: unknown }).updatedAt === "string"
+    );
+  }
+
+  if (action === "delete") {
+    return "cardId" in data && typeof (data as { cardId: unknown }).cardId === "string";
+  }
+
+  return false;
 };
 
 const formatMessageTime = (timestamp: string) => {
@@ -192,6 +263,39 @@ export function HomePage() {
     );
   }, []);
 
+  const handleBoardUpdated = useCallback(
+    (payload: unknown) => {
+      if (!hasBoardUpdatedPayload(payload) || payload.roomId !== selectedRoomId) {
+        return;
+      }
+
+      setCards((prev) => {
+        if (payload.action === "create") {
+          if (prev.some((card) => card.id === payload.card.id)) {
+            return prev;
+          }
+
+          return [...prev, payload.card];
+        }
+
+        if (payload.action === "move") {
+          return prev.map((card) =>
+            card.id === payload.cardId
+              ? {
+                  ...card,
+                  column: payload.toColumn,
+                  updatedAt: payload.updatedAt,
+                }
+              : card,
+          );
+        }
+
+        return prev.filter((card) => card.id !== payload.cardId);
+      });
+    },
+    [selectedRoomId],
+  );
+
   useSocketEvent({ event: eServerToClientEvents.USER_ONLINE, handler: handleUserOnline });
   useSocketEvent({ event: eServerToClientEvents.USER_OFFLINE, handler: handleUserOffline });
   useSocketEvent({
@@ -199,6 +303,7 @@ export function HomePage() {
     handler: handlePresenceSnapshot,
   });
   useSocketEvent({ event: eServerToClientEvents.MESSAGE_NEW, handler: handleMessageNew });
+  useSocketEvent({ event: eServerToClientEvents.BOARD_UPDATED, handler: handleBoardUpdated });
 
   useEffect(() => {
     if (connection.isConnected) {
@@ -266,44 +371,36 @@ export function HomePage() {
   }, [socket]);
 
   const handleMoveCard = (cardId: string) => {
-    setCards((prev) =>
-      prev.map((card) => {
-        if (card.id !== cardId) {
-          return card;
-        }
+    const card = cards.find((item) => item.id === cardId);
+    if (!card) {
+      return;
+    }
 
-        const nextColumn =
-          card.column === "todo"
-            ? "inProgress"
-            : card.column === "inProgress"
-              ? "done"
-              : "todo";
+    const nextColumn: BoardColumnId =
+      card.column === "todo" ? "inProgress" : card.column === "inProgress" ? "done" : "todo";
 
-        return {
-          ...card,
-          column: nextColumn,
-          updatedAt: "방금 전",
-        };
-      }),
-    );
+    emit(eClientToServerEvents.BOARD_MOVE, {
+      roomId: selectedRoomId,
+      cardId,
+      toColumn: nextColumn,
+    });
   };
 
   const handleDeleteCard = (cardId: string) => {
-    setCards((prev) => prev.filter((card) => card.id !== cardId));
+    emit(eClientToServerEvents.BOARD_DELETE, {
+      roomId: selectedRoomId,
+      cardId,
+    });
   };
 
   const handleCreateCard = () => {
-    setCards((prev) => [
-      ...prev,
-      {
-        id: crypto.randomUUID(),
-        title: `신규 작업 ${prev.length + 1}`,
-        assigneeId: currentUserId,
-        column: "todo",
-        updatedAt: "방금 전",
-        tags: ["신규"],
-      },
-    ]);
+    emit(eClientToServerEvents.BOARD_CREATE, {
+      roomId: selectedRoomId,
+      cardId: crypto.randomUUID(),
+      title: `신규 작업 ${cards.length + 1}`,
+      assigneeId: currentUserId,
+      tags: ["신규"],
+    });
   };
 
   return (
