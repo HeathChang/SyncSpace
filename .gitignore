@@ -34,3 +34,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# AI tool configs (개인 환경 — .ruler/는 공유)
+CLAUDE.md
+.cursorrules
