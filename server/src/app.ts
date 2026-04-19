@@ -4,14 +4,19 @@ import http from "http";
 import { Server } from "socket.io";
 import { eClientToServerEvents, eServerToClientEvents } from "./socket.types";
 import { ClientToServerEvents, ServerToClientEvents } from "./socket.types";
+import { logger } from "./logger";
+import "dotenv/config";
+
+const CORS_ORIGIN = process.env.CORS_ORIGIN ?? "http://localhost:3000";
+const PORT = Number(process.env.PORT) || 8001;
 
 const app = express();
-app.use(cors({ origin: ["http://localhost:3000"], credentials: true }));
+app.use(cors({ origin: [CORS_ORIGIN], credentials: true }));
 
 const server = http.createServer(app);
 const io = new Server<ClientToServerEvents, ServerToClientEvents>(server, {
     cors: {
-        origin: ["http://localhost:3000"],
+        origin: [CORS_ORIGIN],
         credentials: true,
     },
 });
@@ -55,7 +60,7 @@ const getOnlineUserIds = () => [...userToSocketIds.keys()];
 const boardColumns = new Set(["todo", "inProgress", "done"]);
 
 io.on("connection", (socket) => {
-    console.log("a user connected", socket.id);
+    logger.info({ socketId: socket.id }, "a user connected");
 
     socket.on(eClientToServerEvents.USER_JOIN, ({ userId }) => {
         const previousUserId = socketToUserId.get(socket.id);
@@ -78,7 +83,7 @@ io.on("connection", (socket) => {
         socket.emit(eServerToClientEvents.PRESENCE_SNAPSHOT, {
             userIds: getOnlineUserIds(),
         });
-        console.log(`user ${userId} joined (socketId: ${socket.id})`);
+        logger.info({ userId, socketId: socket.id }, "user joined");
     });
 
     socket.on(eClientToServerEvents.ROOM_JOIN, ({ roomId }) => {
@@ -87,7 +92,7 @@ io.on("connection", (socket) => {
         }
 
         socket.join(roomId);
-        console.log(`socket ${socket.id} joined room ${roomId}`);
+        logger.info({ socketId: socket.id, roomId }, "socket joined room");
     });
 
     socket.on(eClientToServerEvents.ROOM_LEAVE, ({ roomId }) => {
@@ -96,7 +101,7 @@ io.on("connection", (socket) => {
         }
 
         socket.leave(roomId);
-        console.log(`socket ${socket.id} left room ${roomId}`);
+        logger.info({ socketId: socket.id, roomId }, "socket left room");
     });
 
     socket.on(eClientToServerEvents.MESSAGE_SEND, ({ roomId, message }) => {
@@ -168,7 +173,7 @@ io.on("connection", (socket) => {
     socket.on("disconnect", () => {
         const userId = socket.data.userId as string | undefined;
         const removed = removeUserSocket(socket.id);
-        console.log(`user ${userId} disconnected (socketId: ${socket.id})`);
+        logger.info({ userId, socketId: socket.id }, "user disconnected");
 
         if (removed.userId && removed.isNowOffline) {
             socket.broadcast.emit(eServerToClientEvents.USER_OFFLINE, {
@@ -178,12 +183,8 @@ io.on("connection", (socket) => {
     });
 });
 
-server.listen(8001, () => {
-    console.log("socket server listening on :8001");
+server.listen(PORT, () => {
+    logger.info(`socket server listening on :${PORT}`);
 });
-
-
-
-
 
 

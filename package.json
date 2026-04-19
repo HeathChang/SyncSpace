@@ -11,6 +11,7 @@
         "server": "npm run dev --prefix server"
     },
     "devDependencies": {
+        "ajv": "^8.18.0",
         "concurrently": "^8.2.0"
     }
 }

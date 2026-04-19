@@ -1,4 +1,4 @@
-import { ConnectionState } from "../model/connection";
+import type { ConnectionState } from "../model/connection";
 
 export const initialConnectionState: ConnectionState = {
     isConnected: false,

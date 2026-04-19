@@ -1,8 +1,8 @@
-import type { BoardCard, BoardColumnId } from "@/entities/board/model/types";
-import type { ChatMessage } from "@/entities/message/model/types";
-import type { Room } from "@/entities/room/model/types";
-import type { WorkspaceUser } from "@/entities/user/model/types";
-import type { ConnectionState } from "@/shared/model/connection";
+import type { BoardCard, BoardColumnId } from "@/entities/board";
+import type { ChatMessage } from "@/entities/message";
+import type { Room } from "@/entities/room";
+import type { WorkspaceUser } from "@/entities/user";
+import type { ConnectionState } from "@/shared/model";
 
 export const mockRooms: Room[] = [
   {

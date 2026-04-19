@@ -1,17 +1,16 @@
 "use client";
 
-// src/app/providers/SocketProvider.tsx
 import {
   createContext,
   useEffect,
   useMemo,
   useState,
 } from "react";
-import { getSocket } from "@/shared/socket/socket";
+import { getSocket } from "./socket";
 import type { Socket } from "socket.io-client";
-import type { ConnectionState } from "@/shared/model/connection";
-import { initialConnectionState } from "@/shared/const/initData";
-import { iSocketProvider } from "./socket.type";
+import type { ConnectionState } from "@/shared/model";
+import { initialConnectionState } from "@/shared/const";
+import type { iSocketProvider } from "./socket.type";
 
 export type SocketContextValue = {
   socket: Socket;
@@ -24,7 +23,6 @@ export const SocketProvider = ({
   children,
   url,
 }: iSocketProvider) => {
-  console.log("SocketProvider", url);
   const [socket] = useState<Socket>(() => getSocket(url));
   const [connection, setConnection] = useState<ConnectionState>(
     initialConnectionState
