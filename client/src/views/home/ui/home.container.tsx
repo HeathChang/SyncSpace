@@ -27,7 +27,7 @@ export function HomeContainer() {
   const [users, setUsers] = useState<WorkspaceUser[]>(mockUsers);
   const { socket, connection } = useSocket();
 
-  const { emit } = useHomeSocket({
+  const { emitAck } = useHomeSocket({
     currentUserId: CURRENT_USER_ID,
     selectedRoomId,
     isConnected: connection.isConnected,
@@ -45,7 +45,7 @@ export function HomeContainer() {
     handleCreateCard,
   } = useHomeActions({
     socket,
-    emit,
+    emitAck,
     selectedRoomId,
     currentUserId: CURRENT_USER_ID,
     cards,

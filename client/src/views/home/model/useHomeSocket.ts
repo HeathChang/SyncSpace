@@ -6,7 +6,8 @@ import type { ChatMessage } from "@/entities/message";
 import type { PresenceStatus, WorkspaceUser } from "@/entities/user";
 import {
   useSocketEvent,
-  useSocketEmit,
+  useSocketEmitAck,
+  useSocketReconnect,
   useQueueStack,
   eClientToServerEvents,
   eServerToClientEvents,
@@ -19,6 +20,7 @@ import {
   formatMessageTime,
 } from "@/shared/lib/socket-type-guards";
 import type { MessagePayload } from "@/shared/lib/socket-type-guards";
+import { logger } from "@/shared/lib/logger";
 
 const ACTIVE_NOW_TEXT = "방금 전";
 
@@ -41,8 +43,9 @@ export const useHomeSocket = ({
   setCards,
   setUsers,
 }: UseHomeSocketOptions) => {
-  const { emit } = useSocketEmit();
+  const { emitAck } = useSocketEmitAck();
   const usersRef = useRef(users);
+  const processedMessageIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     usersRef.current = users;
@@ -50,6 +53,12 @@ export const useHomeSocket = ({
 
   const processQueuedMessage = useCallback(
     (nextMessage: MessagePayload) => {
+      const dedupKey = `${nextMessage.roomId}:${nextMessage.userId}:${nextMessage.timestamp}:${nextMessage.message}`;
+      if (processedMessageIdsRef.current.has(dedupKey)) {
+        return;
+      }
+      processedMessageIdsRef.current.add(dedupKey);
+
       const authorName =
         usersRef.current.find((user) => user.id === nextMessage.userId)?.name ?? "알 수 없음";
 
@@ -157,19 +166,37 @@ export const useHomeSocket = ({
   useSocketEvent({ event: eServerToClientEvents.BOARD_UPDATED, handler: handleBoardUpdated });
 
   useEffect(() => {
-    if (isConnected) {
-      emit(eClientToServerEvents.USER_JOIN, { userId: currentUserId });
-    }
-  }, [isConnected, emit, currentUserId]);
+    if (!isConnected) return;
+
+    void emitAck(eClientToServerEvents.USER_JOIN, { userId: currentUserId }).then((ack) => {
+      if (!ack.ok) {
+        logger.warn("USER_JOIN failed", ack.error);
+      }
+    });
+  }, [isConnected, emitAck, currentUserId]);
 
   useEffect(() => {
     if (!isConnected) return;
 
-    emit(eClientToServerEvents.ROOM_JOIN, { roomId: selectedRoomId });
-    return () => {
-      emit(eClientToServerEvents.ROOM_LEAVE, { roomId: selectedRoomId });
-    };
-  }, [isConnected, selectedRoomId, emit]);
+    void emitAck(eClientToServerEvents.ROOM_JOIN, { roomId: selectedRoomId }).then((ack) => {
+      if (!ack.ok) {
+        logger.warn("ROOM_JOIN failed", ack.error);
+      }
+    });
 
-  return { emit };
+    return () => {
+      void emitAck(eClientToServerEvents.ROOM_LEAVE, { roomId: selectedRoomId });
+    };
+  }, [isConnected, selectedRoomId, emitAck]);
+
+  // 재연결 복구: 유저 재조인 + Room 재참여 + 메시지 중복 방지 리셋
+  useSocketReconnect(
+    useCallback(() => {
+      processedMessageIdsRef.current.clear();
+      void emitAck(eClientToServerEvents.USER_JOIN, { userId: currentUserId });
+      void emitAck(eClientToServerEvents.ROOM_JOIN, { roomId: selectedRoomId });
+    }, [emitAck, currentUserId, selectedRoomId]),
+  );
+
+  return { emitAck };
 };

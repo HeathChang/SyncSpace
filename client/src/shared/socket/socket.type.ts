@@ -1,3 +1,5 @@
+import type { AckCallback, RequestEnvelope } from "./socket.envelope";
+
 export enum eServerToClientEvents {
     USER_ONLINE = "user:online",
     USER_OFFLINE = "user:offline",
@@ -17,7 +19,49 @@ export enum eClientToServerEvents {
     ROOM_LEAVE = "room:leave",
 }
 
-// Server to Client Events
+export interface UserJoinReq {
+    userId: string;
+}
+
+export interface MessageSendReq {
+    roomId: string;
+    message: string;
+}
+
+export interface MessageSendData {
+    messageId: string;
+    timestamp: string;
+}
+
+export interface BoardCreateReq {
+    roomId: string;
+    cardId: string;
+    title: string;
+    assigneeId: string;
+    tags: string[];
+}
+
+export interface BoardMoveReq {
+    roomId: string;
+    cardId: string;
+    toColumn: "todo" | "inProgress" | "done";
+}
+
+export interface BoardDeleteReq {
+    roomId: string;
+    cardId: string;
+}
+
+export interface CursorMoveReq {
+    x: number;
+    y: number;
+}
+
+export interface RoomReq {
+    roomId: string;
+}
+
+// Server to Client Events (payload only — one-way broadcast)
 export interface ServerToClientEvents {
     [eServerToClientEvents.USER_ONLINE]: { userId: string };
     [eServerToClientEvents.USER_OFFLINE]: { userId: string };
@@ -55,26 +99,39 @@ export interface ServerToClientEvents {
         };
 }
 
-// Client to Server Events
+// Client to Server Events (with ACK callback signature)
 export interface ClientToServerEvents {
-    [eClientToServerEvents.USER_JOIN]: { userId: string };
-    [eClientToServerEvents.MESSAGE_SEND]: { roomId: string; message: string };
-    [eClientToServerEvents.BOARD_CREATE]: {
-        roomId: string;
-        cardId: string;
-        title: string;
-        assigneeId: string;
-        tags: string[];
-    };
-    [eClientToServerEvents.BOARD_MOVE]: {
-        roomId: string;
-        cardId: string;
-        toColumn: "todo" | "inProgress" | "done";
-    };
-    [eClientToServerEvents.BOARD_DELETE]: { roomId: string; cardId: string };
-    [eClientToServerEvents.CURSOR_MOVE]: { x: number; y: number };
-    [eClientToServerEvents.ROOM_JOIN]: { roomId: string };
-    [eClientToServerEvents.ROOM_LEAVE]: { roomId: string };
+    [eClientToServerEvents.USER_JOIN]: (
+        payload: RequestEnvelope<UserJoinReq>,
+        ack: AckCallback<{ userIds: string[] }>,
+    ) => void;
+    [eClientToServerEvents.MESSAGE_SEND]: (
+        payload: RequestEnvelope<MessageSendReq>,
+        ack: AckCallback<MessageSendData>,
+    ) => void;
+    [eClientToServerEvents.BOARD_CREATE]: (
+        payload: RequestEnvelope<BoardCreateReq>,
+        ack: AckCallback,
+    ) => void;
+    [eClientToServerEvents.BOARD_MOVE]: (
+        payload: RequestEnvelope<BoardMoveReq>,
+        ack: AckCallback,
+    ) => void;
+    [eClientToServerEvents.BOARD_DELETE]: (
+        payload: RequestEnvelope<BoardDeleteReq>,
+        ack: AckCallback,
+    ) => void;
+    [eClientToServerEvents.CURSOR_MOVE]: (
+        payload: RequestEnvelope<CursorMoveReq>,
+    ) => void;
+    [eClientToServerEvents.ROOM_JOIN]: (
+        payload: RequestEnvelope<RoomReq>,
+        ack: AckCallback,
+    ) => void;
+    [eClientToServerEvents.ROOM_LEAVE]: (
+        payload: RequestEnvelope<RoomReq>,
+        ack: AckCallback,
+    ) => void;
 }
 
 export interface iSocketProvider {

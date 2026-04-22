@@ -1,3 +1,5 @@
+import type { AckCallback, RequestEnvelope } from "./socket.envelope";
+
 export enum eServerToClientEvents {
     USER_ONLINE = "user:online",
     USER_OFFLINE = "user:offline",
@@ -17,26 +19,80 @@ export enum eClientToServerEvents {
     ROOM_LEAVE = "room:leave",
 }
 
+export interface UserJoinReq {
+    userId: string;
+}
+
+export interface MessageSendReq {
+    roomId: string;
+    message: string;
+}
+
+export interface MessageSendData {
+    messageId: string;
+    timestamp: string;
+}
+
+export interface BoardCreateReq {
+    roomId: string;
+    cardId: string;
+    title: string;
+    assigneeId: string;
+    tags: string[];
+}
+
+export interface BoardMoveReq {
+    roomId: string;
+    cardId: string;
+    toColumn: "todo" | "inProgress" | "done";
+}
+
+export interface BoardDeleteReq {
+    roomId: string;
+    cardId: string;
+}
+
+export interface CursorMoveReq {
+    x: number;
+    y: number;
+}
+
+export interface RoomReq {
+    roomId: string;
+}
 
 export interface ClientToServerEvents {
-    [eClientToServerEvents.USER_JOIN]: (payload: { userId: string }) => void;
-    [eClientToServerEvents.MESSAGE_SEND]: (payload: { roomId: string; message: string }) => void;
-    [eClientToServerEvents.BOARD_CREATE]: (payload: {
-        roomId: string;
-        cardId: string;
-        title: string;
-        assigneeId: string;
-        tags: string[];
-    }) => void;
-    [eClientToServerEvents.BOARD_MOVE]: (payload: {
-        roomId: string;
-        cardId: string;
-        toColumn: "todo" | "inProgress" | "done";
-    }) => void;
-    [eClientToServerEvents.BOARD_DELETE]: (payload: { roomId: string; cardId: string }) => void;
-    [eClientToServerEvents.CURSOR_MOVE]: (payload: { x: number; y: number }) => void;
-    [eClientToServerEvents.ROOM_JOIN]: (payload: { roomId: string }) => void;
-    [eClientToServerEvents.ROOM_LEAVE]: (payload: { roomId: string }) => void;
+    [eClientToServerEvents.USER_JOIN]: (
+        payload: RequestEnvelope<UserJoinReq>,
+        ack: AckCallback<{ userIds: string[] }>,
+    ) => void;
+    [eClientToServerEvents.MESSAGE_SEND]: (
+        payload: RequestEnvelope<MessageSendReq>,
+        ack: AckCallback<MessageSendData>,
+    ) => void;
+    [eClientToServerEvents.BOARD_CREATE]: (
+        payload: RequestEnvelope<BoardCreateReq>,
+        ack: AckCallback,
+    ) => void;
+    [eClientToServerEvents.BOARD_MOVE]: (
+        payload: RequestEnvelope<BoardMoveReq>,
+        ack: AckCallback,
+    ) => void;
+    [eClientToServerEvents.BOARD_DELETE]: (
+        payload: RequestEnvelope<BoardDeleteReq>,
+        ack: AckCallback,
+    ) => void;
+    [eClientToServerEvents.CURSOR_MOVE]: (
+        payload: RequestEnvelope<CursorMoveReq>,
+    ) => void;
+    [eClientToServerEvents.ROOM_JOIN]: (
+        payload: RequestEnvelope<RoomReq>,
+        ack: AckCallback,
+    ) => void;
+    [eClientToServerEvents.ROOM_LEAVE]: (
+        payload: RequestEnvelope<RoomReq>,
+        ack: AckCallback,
+    ) => void;
 }
 
 export interface ServerToClientEvents {
