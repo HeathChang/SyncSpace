@@ -6,6 +6,8 @@ export enum eServerToClientEvents {
     PRESENCE_SNAPSHOT = "presence:snapshot",
     MESSAGE_NEW = "message:new",
     BOARD_UPDATED = "board:updated",
+    NOTIFICATION_NEW = "notification:new",
+    NOTIFICATION_SNAPSHOT = "notification:snapshot",
 }
 
 export enum eClientToServerEvents {
@@ -17,20 +19,28 @@ export enum eClientToServerEvents {
     CURSOR_MOVE = "cursor:move",
     ROOM_JOIN = "room:join",
     ROOM_LEAVE = "room:leave",
+    NOTIFICATION_READ = "notification:read",
 }
 
-export interface UserJoinReq {
+export type NotificationKind = "board:assigned" | "board:mentioned" | "system:info";
+
+export interface NotificationDto {
+    id: string;
     userId: string;
+    kind: NotificationKind;
+    title: string;
+    body: string;
+    createdAt: string;
+    readAt?: string;
+    meta?: Record<string, string>;
 }
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export interface UserJoinReq {}
 
 export interface MessageSendReq {
     roomId: string;
     message: string;
-}
-
-export interface MessageSendData {
-    messageId: string;
-    timestamp: string;
 }
 
 export interface BoardCreateReq {
@@ -52,16 +62,15 @@ export interface BoardDeleteReq {
     cardId: string;
 }
 
-export interface CursorMoveReq {
-    x: number;
-    y: number;
-}
-
 export interface RoomReq {
     roomId: string;
 }
 
-// Server to Client Events (payload only — one-way broadcast)
+export interface NotificationReadReq {
+    notificationId: string;
+}
+
+// Server → Client Events
 export interface ServerToClientEvents {
     [eServerToClientEvents.USER_ONLINE]: { userId: string };
     [eServerToClientEvents.USER_OFFLINE]: { userId: string };
@@ -97,17 +106,22 @@ export interface ServerToClientEvents {
             action: "delete";
             cardId: string;
         };
+    [eServerToClientEvents.NOTIFICATION_NEW]: NotificationDto;
+    [eServerToClientEvents.NOTIFICATION_SNAPSHOT]: {
+        notifications: NotificationDto[];
+        unreadCount: number;
+    };
 }
 
-// Client to Server Events (with ACK callback signature)
+// Client → Server Events
 export interface ClientToServerEvents {
     [eClientToServerEvents.USER_JOIN]: (
         payload: RequestEnvelope<UserJoinReq>,
-        ack: AckCallback<{ userIds: string[] }>,
+        ack: AckCallback<{ userIds: string[]; userId: string; name: string }>,
     ) => void;
     [eClientToServerEvents.MESSAGE_SEND]: (
         payload: RequestEnvelope<MessageSendReq>,
-        ack: AckCallback<MessageSendData>,
+        ack: AckCallback<{ messageId: string; timestamp: string }>,
     ) => void;
     [eClientToServerEvents.BOARD_CREATE]: (
         payload: RequestEnvelope<BoardCreateReq>,
@@ -122,7 +136,7 @@ export interface ClientToServerEvents {
         ack: AckCallback,
     ) => void;
     [eClientToServerEvents.CURSOR_MOVE]: (
-        payload: RequestEnvelope<CursorMoveReq>,
+        payload: RequestEnvelope<{ x: number; y: number }>,
     ) => void;
     [eClientToServerEvents.ROOM_JOIN]: (
         payload: RequestEnvelope<RoomReq>,
@@ -130,6 +144,10 @@ export interface ClientToServerEvents {
     ) => void;
     [eClientToServerEvents.ROOM_LEAVE]: (
         payload: RequestEnvelope<RoomReq>,
+        ack: AckCallback,
+    ) => void;
+    [eClientToServerEvents.NOTIFICATION_READ]: (
+        payload: RequestEnvelope<NotificationReadReq>,
         ack: AckCallback,
     ) => void;
 }

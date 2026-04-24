@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import type { BoardCard } from "@/entities/board";
 import type { ChatMessage } from "@/entities/message";
+import type { Notification } from "@/entities/notification";
 import type { PresenceStatus, WorkspaceUser } from "@/entities/user";
 import {
   useSocketEvent,
@@ -17,10 +18,12 @@ import {
   hasMessagePayload,
   hasPresenceSnapshotPayload,
   hasBoardUpdatedPayload,
+  hasNotification,
+  hasNotificationSnapshot,
   formatMessageTime,
-} from "@/shared/lib/socket-type-guards";
-import type { MessagePayload } from "@/shared/lib/socket-type-guards";
-import { logger } from "@/shared/lib/logger";
+  logger,
+} from "@/shared/lib";
+import type { MessagePayload } from "@/shared/lib";
 
 const ACTIVE_NOW_TEXT = "방금 전";
 
@@ -32,6 +35,7 @@ interface UseHomeSocketOptions {
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
   setCards: React.Dispatch<React.SetStateAction<BoardCard[]>>;
   setUsers: React.Dispatch<React.SetStateAction<WorkspaceUser[]>>;
+  setNotifications: React.Dispatch<React.SetStateAction<Notification[]>>;
 }
 
 export const useHomeSocket = ({
@@ -42,6 +46,7 @@ export const useHomeSocket = ({
   setMessages,
   setCards,
   setUsers,
+  setNotifications,
 }: UseHomeSocketOptions) => {
   const { emitAck } = useSocketEmitAck();
   const usersRef = useRef(users);
@@ -159,21 +164,46 @@ export const useHomeSocket = ({
     [selectedRoomId, setCards],
   );
 
+  const handleNotificationNew = useCallback(
+    (payload: unknown) => {
+      if (!hasNotification(payload)) return;
+
+      setNotifications((prev) => {
+        if (prev.some((item) => item.id === payload.id)) return prev;
+        return [payload, ...prev];
+      });
+    },
+    [setNotifications],
+  );
+
+  const handleNotificationSnapshot = useCallback(
+    (payload: unknown) => {
+      if (!hasNotificationSnapshot(payload)) return;
+      setNotifications(payload.notifications);
+    },
+    [setNotifications],
+  );
+
   useSocketEvent({ event: eServerToClientEvents.USER_ONLINE, handler: handleUserOnline });
   useSocketEvent({ event: eServerToClientEvents.USER_OFFLINE, handler: handleUserOffline });
   useSocketEvent({ event: eServerToClientEvents.PRESENCE_SNAPSHOT, handler: handlePresenceSnapshot });
   useSocketEvent({ event: eServerToClientEvents.MESSAGE_NEW, handler: handleMessageNew });
   useSocketEvent({ event: eServerToClientEvents.BOARD_UPDATED, handler: handleBoardUpdated });
+  useSocketEvent({ event: eServerToClientEvents.NOTIFICATION_NEW, handler: handleNotificationNew });
+  useSocketEvent({
+    event: eServerToClientEvents.NOTIFICATION_SNAPSHOT,
+    handler: handleNotificationSnapshot,
+  });
 
   useEffect(() => {
     if (!isConnected) return;
 
-    void emitAck(eClientToServerEvents.USER_JOIN, { userId: currentUserId }).then((ack) => {
+    void emitAck(eClientToServerEvents.USER_JOIN, {}).then((ack) => {
       if (!ack.ok) {
         logger.warn("USER_JOIN failed", ack.error);
       }
     });
-  }, [isConnected, emitAck, currentUserId]);
+  }, [isConnected, emitAck]);
 
   useEffect(() => {
     if (!isConnected) return;
@@ -189,14 +219,16 @@ export const useHomeSocket = ({
     };
   }, [isConnected, selectedRoomId, emitAck]);
 
-  // 재연결 복구: 유저 재조인 + Room 재참여 + 메시지 중복 방지 리셋
   useSocketReconnect(
     useCallback(() => {
       processedMessageIdsRef.current.clear();
-      void emitAck(eClientToServerEvents.USER_JOIN, { userId: currentUserId });
+      void emitAck(eClientToServerEvents.USER_JOIN, {});
       void emitAck(eClientToServerEvents.ROOM_JOIN, { roomId: selectedRoomId });
-    }, [emitAck, currentUserId, selectedRoomId]),
+    }, [emitAck, selectedRoomId]),
   );
+
+  // currentUserId는 재연결 로직의 명시적 의존성으로 유지 (로그인 유저 변경 감지용)
+  void currentUserId;
 
   return { emitAck };
 };

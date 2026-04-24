@@ -1,4 +1,5 @@
 import type { BoardCard, BoardColumnId } from "@/entities/board";
+import type { Notification, NotificationKind } from "@/entities/notification";
 
 type BoardUpdatedPayload =
   | {
@@ -118,6 +119,32 @@ export const hasBoardUpdatedPayload = (data: unknown): data is BoardUpdatedPaylo
   }
 
   return false;
+};
+
+const isNotificationKind = (value: unknown): value is NotificationKind =>
+  value === "board:assigned" || value === "board:mentioned" || value === "system:info";
+
+export const hasNotification = (data: unknown): data is Notification => {
+  if (typeof data !== "object" || data === null) return false;
+  const candidate = data as Record<string, unknown>;
+  return (
+    typeof candidate.id === "string" &&
+    typeof candidate.userId === "string" &&
+    isNotificationKind(candidate.kind) &&
+    typeof candidate.title === "string" &&
+    typeof candidate.body === "string" &&
+    typeof candidate.createdAt === "string"
+  );
+};
+
+export const hasNotificationSnapshot = (
+  data: unknown,
+): data is { notifications: Notification[]; unreadCount: number } => {
+  if (typeof data !== "object" || data === null) return false;
+  const candidate = data as Record<string, unknown>;
+  if (!Array.isArray(candidate.notifications)) return false;
+  if (typeof candidate.unreadCount !== "number") return false;
+  return candidate.notifications.every(hasNotification);
 };
 
 export const formatMessageTime = (timestamp: string) => {

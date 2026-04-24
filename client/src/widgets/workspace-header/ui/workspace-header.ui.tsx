@@ -8,12 +8,18 @@ interface WorkspaceHeaderProps {
   currentRoom: Room;
   users: WorkspaceUser[];
   connection: ConnectionState;
+  currentUserName?: string;
+  unreadNotificationCount?: number;
+  onLogout?: () => void;
 }
 
 export function WorkspaceHeader({
   currentRoom,
   users,
   connection,
+  currentUserName,
+  unreadNotificationCount,
+  onLogout,
 }: WorkspaceHeaderProps) {
   const onlineCount = users.filter((user) => user.status === "online").length;
 
@@ -38,6 +44,23 @@ export function WorkspaceHeader({
           <span>소켓 상태</span>
           <strong>{connection.isConnected ? "정상" : "점검 필요"}</strong>
         </article>
+        {typeof unreadNotificationCount === "number" ? (
+          <article>
+            <span>알림</span>
+            <strong>{unreadNotificationCount}건</strong>
+          </article>
+        ) : null}
+        {currentUserName ? (
+          <article className="user-badge">
+            <span>로그인</span>
+            <strong>{currentUserName}</strong>
+            {onLogout ? (
+              <button type="button" className="ghost" onClick={onLogout} aria-label="로그아웃">
+                로그아웃
+              </button>
+            ) : null}
+          </article>
+        ) : null}
       </div>
     </header>
   );

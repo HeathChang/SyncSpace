@@ -14,8 +14,8 @@
 
 | 방향 | 예시 |
 |------|------|
-| Client → Server (요청/의도) | `user:join`, `message:send`, `board:create`, `board:move`, `board:delete`, `room:join`, `room:leave` |
-| Server → Client (상태 변경 방송) | `user:online`, `user:offline`, `presence:snapshot`, `message:new`, `board:updated` |
+| Client → Server (요청/의도) | `user:join`, `message:send`, `board:create`, `board:move`, `board:delete`, `room:join`, `room:leave`, `notification:read` |
+| Server → Client (상태 변경 방송) | `user:online`, `user:offline`, `presence:snapshot`, `message:new`, `board:updated`, `notification:new`, `notification:snapshot` |
 
 ### 의미 구분
 - Client → Server는 **의도(intent)** 를 표현 (`send`, `create`, `move`).
@@ -108,3 +108,70 @@ enum eErrorCode {
 - ACK 없이 요청을 보내는 코드 (`socket.emit(event, payload)` 직접 호출 금지, `useSocketEmit`/`useSocketEmitAck` 훅 사용).
 - `console.log`로 이벤트 디버깅 (로거 사용, `logger.info`/`logger.warn`).
 - `requestId` 없는 요청 전송 (`useSocketEmit` 계열은 자동 생성).
+
+---
+
+## 5. Authentication (STEP 9)
+
+### 5.1. JWT + httpOnly 쿠키
+
+- 로그인 `POST /auth/login` → httpOnly 쿠키 `syncspace_token` 발급 (TTL 2시간).
+- 클라이언트는 Socket 연결 시 `withCredentials: true`로 쿠키 자동 전달.
+- Socket.IO `io.use(socketAuthMiddleware)` 에서 쿠키의 JWT를 검증.
+  - 실패 시 `UNAUTHORIZED` 에러로 연결 거부.
+  - 성공 시 `socket.data.userId`, `socket.data.userName` 주입.
+
+### 5.2. USER_JOIN 의미 변경
+
+- 기존: 페이로드의 `userId`로 유저 인증 (스푸핑 가능).
+- 변경 후: JWT에서 인증된 `userId`만 사용 — 페이로드 `userId`는 **무시**.
+- 클라이언트는 빈 객체 `{}` + `requestId`만 전송.
+
+### 5.3. 인증 관련 에러 코드
+
+- `UNAUTHORIZED`: JWT 없음/만료/위조
+- 라우트 API (HTTP): 401 응답
+- Socket: `io.use` 미들웨어에서 connection 차단
+
+---
+
+## 6. Notification System (STEP 10)
+
+### 6.1. 이벤트
+
+| 이벤트 | 방향 | 용도 |
+|--------|------|------|
+| `notification:new` | Server → Client | 실시간 개인 알림 단건 전달 |
+| `notification:snapshot` | Server → Client | 연결/user:join 시 unread 포함 목록 일괄 전달 |
+| `notification:read` | Client → Server | 특정 알림 읽음 처리 (ACK) |
+
+### 6.2. 개인 이벤트 전송 패턴
+
+- 인증된 소켓은 연결 직후 개인 Room `user:{userId}` 에 자동 합류.
+- 서버는 `io.to(userRoom(userId)).emit(...)` 로 개인 대상 이벤트 전송.
+- 같은 유저의 멀티 디바이스/탭에 동시 도달.
+
+### 6.3. 알림 트리거 예시
+
+- `board:create` 시 `assigneeId !== actorId` 이면 할당 대상자에게 `notification:new` 전송.
+- 스토어는 유저당 최대 100개 유지 (FIFO).
+
+### 6.4. Notification 페이로드
+
+```ts
+interface Notification {
+    id: string;             // 서버 생성 UUID
+    userId: string;         // 수신자
+    kind: "board:assigned" | "board:mentioned" | "system:info";
+    title: string;
+    body: string;
+    createdAt: string;      // ISO timestamp
+    readAt?: string;        // 읽은 시각
+    meta?: Record<string, string>;
+}
+```
+
+### 6.5. 읽음 처리 규칙
+
+- 클라이언트는 optimistic update 후 `notification:read` 전송.
+- ACK 실패 시 read 상태 롤백 (useNotificationActions 참조).

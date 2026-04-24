@@ -1,6 +1,6 @@
 "use client";
 
-export { getSocket } from "./socket";
+export { getSocket, disposeSocket } from "./socket";
 export { SocketProvider } from "./socketProvider";
 export type { SocketContextValue } from "./socketProvider";
 export { SocketContext } from "./socketProvider";

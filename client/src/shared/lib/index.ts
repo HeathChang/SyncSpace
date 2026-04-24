@@ -13,6 +13,8 @@ export {
   hasMessagePayload,
   hasPresenceSnapshotPayload,
   hasBoardUpdatedPayload,
+  hasNotification,
+  hasNotificationSnapshot,
   formatMessageTime,
 } from "./socket-type-guards";
 export type { MessagePayload } from "./socket-type-guards";

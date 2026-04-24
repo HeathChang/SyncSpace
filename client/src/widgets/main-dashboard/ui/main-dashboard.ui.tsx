@@ -2,11 +2,13 @@
 
 import type { BoardCard, BoardColumnId } from "@/entities/board";
 import type { ChatMessage } from "@/entities/message";
+import type { Notification } from "@/entities/notification";
 import type { Room } from "@/entities/room";
 import type { WorkspaceUser } from "@/entities/user";
 import { ChatPanel } from "@/features/chat-panel";
 import { CollaborationBoard } from "@/features/collaboration-board";
 import { ConnectionPanel } from "@/features/connection-panel";
+import { NotificationPanel } from "@/features/notification-panel";
 import { PresencePanel } from "@/features/presence-panel";
 import { RoomSelector } from "@/features/room-selector";
 import type { ConnectionState } from "@/shared/model";
@@ -21,12 +23,14 @@ interface MainDashboardProps {
   cards: BoardCard[];
   connection: ConnectionState;
   upcomingItems: string[];
+  notifications?: Notification[];
   onSelectRoom: (roomId: string) => void;
   onSendMessage: (content: string) => void;
   onReconnect: () => void;
   onCreateCard: () => void;
   onMoveCard: (cardId: string) => void;
   onDeleteCard: (cardId: string) => void;
+  onMarkNotificationRead?: (notificationId: string) => void;
 }
 
 export function MainDashboard({
@@ -39,12 +43,14 @@ export function MainDashboard({
   cards,
   connection,
   upcomingItems,
+  notifications,
   onSelectRoom,
   onSendMessage,
   onReconnect,
   onCreateCard,
   onMoveCard,
   onDeleteCard,
+  onMarkNotificationRead,
 }: MainDashboardProps) {
   return (
     <div className="dashboard-grid">
@@ -64,6 +70,12 @@ export function MainDashboard({
       <div className="right-column">
         <PresencePanel users={users} />
         <ConnectionPanel connection={connection} onReconnect={onReconnect} />
+        {notifications && onMarkNotificationRead ? (
+          <NotificationPanel
+            notifications={notifications}
+            onMarkRead={onMarkNotificationRead}
+          />
+        ) : null}
       </div>
 
       <div className="full-width">

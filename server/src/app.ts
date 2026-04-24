@@ -1,6 +1,7 @@
 import cors from "cors";
 import express from "express";
 import http from "http";
+import cookieParser from "cookie-parser";
 import { Server } from "socket.io";
 import { randomUUID } from "crypto";
 import { eClientToServerEvents, eServerToClientEvents } from "./socket.types";
@@ -11,6 +12,9 @@ import type {
 import type { AckCallback, RequestEnvelope } from "./socket.envelope";
 import { eErrorCode } from "./socket.envelope";
 import { DedupStore } from "./dedup-store";
+import { authRouter } from "./auth/auth-routes";
+import { socketAuthMiddleware } from "./auth/socket-auth";
+import { NotificationStore } from "./notification/notification-store";
 import { logger } from "./logger";
 import "dotenv/config";
 
@@ -21,6 +25,9 @@ const DEDUP_MAX_PER_SOCKET = 256;
 
 const app = express();
 app.use(cors({ origin: [CORS_ORIGIN], credentials: true }));
+app.use(express.json());
+app.use(cookieParser());
+app.use("/auth", authRouter);
 
 const server = http.createServer(app);
 const io = new Server<ClientToServerEvents, ServerToClientEvents>(server, {
@@ -30,12 +37,17 @@ const io = new Server<ClientToServerEvents, ServerToClientEvents>(server, {
     },
 });
 
+io.use(socketAuthMiddleware);
+
 const userToSocketIds = new Map<string, Set<string>>();
 const socketToUserId = new Map<string, string>();
 const dedupStore = new DedupStore({
     ttlMs: DEDUP_TTL_MS,
     maxPerSocket: DEDUP_MAX_PER_SOCKET,
 });
+const notificationStore = new NotificationStore();
+
+const userRoom = (userId: string): string => `user:${userId}`;
 
 const addUserSocket = (userId: string, socketId: string) => {
     const socketIds = userToSocketIds.get(userId) ?? new Set<string>();
@@ -80,10 +92,7 @@ const checkDedup = <TPayload, TAckData>(
     if (!payload?.requestId) {
         ack({
             ok: false,
-            error: {
-                code: eErrorCode.INVALID_INPUT,
-                message: "requestId is required",
-            },
+            error: { code: eErrorCode.INVALID_INPUT, message: "requestId is required" },
         });
         return false;
     }
@@ -104,22 +113,17 @@ const checkDedup = <TPayload, TAckData>(
 };
 
 io.on("connection", (socket) => {
-    logger.info({ socketId: socket.id }, "a user connected");
+    const authenticatedUserId = socket.data.userId as string;
+    logger.info({ socketId: socket.id, userId: authenticatedUserId }, "a user connected");
+
+    // 인증된 유저는 연결 즉시 개인 Room에 합류 → 개인 알림 전송 대상
+    socket.join(userRoom(authenticatedUserId));
 
     socket.on(eClientToServerEvents.USER_JOIN, (payload, ack) => {
         if (!checkDedup(socket.id, payload, ack)) return;
 
-        const { userId } = payload;
-        if (!userId) {
-            ack({
-                ok: false,
-                error: {
-                    code: eErrorCode.INVALID_INPUT,
-                    message: "userId is required",
-                },
-            });
-            return;
-        }
+        const userId = authenticatedUserId;
+        const userName = (socket.data.userName as string | undefined) ?? userId;
 
         const previousUserId = socketToUserId.get(socket.id);
         if (previousUserId && previousUserId !== userId) {
@@ -132,7 +136,6 @@ io.on("connection", (socket) => {
         }
 
         const { wasOnline } = addUserSocket(userId, socket.id);
-        socket.data.userId = userId;
 
         if (!wasOnline) {
             socket.broadcast.emit(eServerToClientEvents.USER_ONLINE, { userId });
@@ -142,9 +145,16 @@ io.on("connection", (socket) => {
         socket.emit(eServerToClientEvents.PRESENCE_SNAPSHOT, {
             userIds: onlineUserIds,
         });
-        logger.info({ userId, socketId: socket.id }, "user joined");
 
-        ack({ ok: true, data: { userIds: onlineUserIds } });
+        // 초기 알림 스냅샷 전송
+        const notifications = notificationStore.listForUser(userId);
+        socket.emit(eServerToClientEvents.NOTIFICATION_SNAPSHOT, {
+            notifications,
+            unreadCount: notificationStore.unreadCount(userId),
+        });
+
+        logger.info({ userId, socketId: socket.id }, "user joined");
+        ack({ ok: true, data: { userIds: onlineUserIds, userId, name: userName } });
     });
 
     socket.on(eClientToServerEvents.ROOM_JOIN, (payload, ack) => {
@@ -185,16 +195,9 @@ io.on("connection", (socket) => {
         if (!checkDedup(socket.id, payload, ack)) return;
 
         const { roomId, message } = payload;
-        const userId = socket.data.userId as string | undefined;
+        const userId = authenticatedUserId;
         const trimmedMessage = message?.trim() ?? "";
 
-        if (!userId) {
-            ack({
-                ok: false,
-                error: { code: eErrorCode.UNAUTHORIZED, message: "user not joined" },
-            });
-            return;
-        }
         if (!roomId || !trimmedMessage) {
             ack({
                 ok: false,
@@ -224,6 +227,7 @@ io.on("connection", (socket) => {
 
         const { roomId, cardId, title, assigneeId, tags } = payload;
         const trimmedTitle = title?.trim() ?? "";
+        const actorId = authenticatedUserId;
 
         if (!roomId || !cardId || !assigneeId || !trimmedTitle) {
             ack({
@@ -248,6 +252,22 @@ io.on("connection", (socket) => {
                 tags: tags.length > 0 ? tags : ["신규"],
             },
         });
+
+        // STEP 10: 다른 사람을 담당자로 지정한 경우 개인 알림 발송
+        if (assigneeId !== actorId) {
+            const actorName = (socket.data.userName as string | undefined) ?? actorId;
+            const notification = notificationStore.create({
+                userId: assigneeId,
+                kind: "board:assigned",
+                title: "새 작업이 할당되었습니다",
+                body: `${actorName}님이 "${trimmedTitle}" 카드를 할당했습니다.`,
+                meta: { roomId, cardId },
+            });
+            io.to(userRoom(assigneeId)).emit(
+                eServerToClientEvents.NOTIFICATION_NEW,
+                notification,
+            );
+        }
 
         ack({ ok: true, data: undefined });
     });
@@ -302,8 +322,38 @@ io.on("connection", (socket) => {
         ack({ ok: true, data: undefined });
     });
 
+    socket.on(eClientToServerEvents.NOTIFICATION_READ, (payload, ack) => {
+        if (!checkDedup(socket.id, payload, ack)) return;
+
+        const { notificationId } = payload;
+        if (!notificationId) {
+            ack({
+                ok: false,
+                error: {
+                    code: eErrorCode.INVALID_INPUT,
+                    message: "notificationId is required",
+                },
+            });
+            return;
+        }
+
+        const ok = notificationStore.markRead(authenticatedUserId, notificationId);
+        if (!ok) {
+            ack({
+                ok: false,
+                error: {
+                    code: eErrorCode.INVALID_INPUT,
+                    message: "notification not found",
+                },
+            });
+            return;
+        }
+
+        ack({ ok: true, data: undefined });
+    });
+
     socket.on("disconnect", () => {
-        const userId = socket.data.userId as string | undefined;
+        const userId = authenticatedUserId;
         const removed = removeUserSocket(socket.id);
         dedupStore.remove(socket.id);
         logger.info({ userId, socketId: socket.id }, "user disconnected");

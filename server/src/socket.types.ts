@@ -1,4 +1,5 @@
 import type { AckCallback, RequestEnvelope } from "./socket.envelope";
+import type { Notification } from "./notification/types";
 
 export enum eServerToClientEvents {
     USER_ONLINE = "user:online",
@@ -6,6 +7,8 @@ export enum eServerToClientEvents {
     PRESENCE_SNAPSHOT = "presence:snapshot",
     MESSAGE_NEW = "message:new",
     BOARD_UPDATED = "board:updated",
+    NOTIFICATION_NEW = "notification:new",
+    NOTIFICATION_SNAPSHOT = "notification:snapshot",
 }
 
 export enum eClientToServerEvents {
@@ -17,10 +20,12 @@ export enum eClientToServerEvents {
     CURSOR_MOVE = "cursor:move",
     ROOM_JOIN = "room:join",
     ROOM_LEAVE = "room:leave",
+    NOTIFICATION_READ = "notification:read",
 }
 
 export interface UserJoinReq {
-    userId: string;
+    // userId는 JWT에서 유추하므로 더 이상 페이로드로 받지 않는다.
+    // 후방호환을 위해 비어 있는 객체를 허용.
 }
 
 export interface MessageSendReq {
@@ -61,10 +66,14 @@ export interface RoomReq {
     roomId: string;
 }
 
+export interface NotificationReadReq {
+    notificationId: string;
+}
+
 export interface ClientToServerEvents {
     [eClientToServerEvents.USER_JOIN]: (
         payload: RequestEnvelope<UserJoinReq>,
-        ack: AckCallback<{ userIds: string[] }>,
+        ack: AckCallback<{ userIds: string[]; userId: string; name: string }>,
     ) => void;
     [eClientToServerEvents.MESSAGE_SEND]: (
         payload: RequestEnvelope<MessageSendReq>,
@@ -91,6 +100,10 @@ export interface ClientToServerEvents {
     ) => void;
     [eClientToServerEvents.ROOM_LEAVE]: (
         payload: RequestEnvelope<RoomReq>,
+        ack: AckCallback,
+    ) => void;
+    [eClientToServerEvents.NOTIFICATION_READ]: (
+        payload: RequestEnvelope<NotificationReadReq>,
         ack: AckCallback,
     ) => void;
 }
@@ -130,4 +143,9 @@ export interface ServerToClientEvents {
             action: "delete";
             cardId: string;
         }) => void;
+    [eServerToClientEvents.NOTIFICATION_NEW]: (payload: Notification) => void;
+    [eServerToClientEvents.NOTIFICATION_SNAPSHOT]: (payload: {
+        notifications: Notification[];
+        unreadCount: number;
+    }) => void;
 }
