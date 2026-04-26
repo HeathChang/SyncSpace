@@ -9,7 +9,11 @@ import { logger } from "@/shared/lib";
 
 interface UseHomeActionsOptions {
   socket: Socket;
-  emitAck: <TData = unknown>(
+  emitChat: <TData = unknown>(
+    event: string,
+    payload: Record<string, unknown>,
+  ) => Promise<EventAck<TData>>;
+  emitBoard: <TData = unknown>(
     event: string,
     payload: Record<string, unknown>,
   ) => Promise<EventAck<TData>>;
@@ -32,7 +36,8 @@ const warnOnFailure = (eventName: string, ack: EventAck<unknown>) => {
 
 export const useHomeActions = ({
   socket,
-  emitAck,
+  emitChat,
+  emitBoard,
   selectedRoomId,
   currentUserId,
   cards,
@@ -42,12 +47,12 @@ export const useHomeActions = ({
       const trimmed = content.trim();
       if (!trimmed) return;
 
-      void emitAck(eClientToServerEvents.MESSAGE_SEND, {
+      void emitChat(eClientToServerEvents.MESSAGE_SEND, {
         roomId: selectedRoomId,
         message: trimmed,
       }).then((ack) => warnOnFailure("MESSAGE_SEND", ack));
     },
-    [emitAck, selectedRoomId],
+    [emitChat, selectedRoomId],
   );
 
   const handleReconnect = useCallback(() => {
@@ -60,34 +65,34 @@ export const useHomeActions = ({
       const card = cards.find((item) => item.id === cardId);
       if (!card) return;
 
-      void emitAck(eClientToServerEvents.BOARD_MOVE, {
+      void emitBoard(eClientToServerEvents.BOARD_MOVE, {
         roomId: selectedRoomId,
         cardId,
         toColumn: getNextColumn(card.column),
       }).then((ack) => warnOnFailure("BOARD_MOVE", ack));
     },
-    [cards, emitAck, selectedRoomId],
+    [cards, emitBoard, selectedRoomId],
   );
 
   const handleDeleteCard = useCallback(
     (cardId: string) => {
-      void emitAck(eClientToServerEvents.BOARD_DELETE, {
+      void emitBoard(eClientToServerEvents.BOARD_DELETE, {
         roomId: selectedRoomId,
         cardId,
       }).then((ack) => warnOnFailure("BOARD_DELETE", ack));
     },
-    [emitAck, selectedRoomId],
+    [emitBoard, selectedRoomId],
   );
 
   const handleCreateCard = useCallback(() => {
-    void emitAck(eClientToServerEvents.BOARD_CREATE, {
+    void emitBoard(eClientToServerEvents.BOARD_CREATE, {
       roomId: selectedRoomId,
       cardId: crypto.randomUUID(),
       title: `신규 작업 ${cards.length + 1}`,
       assigneeId: currentUserId,
       tags: ["신규"],
     }).then((ack) => warnOnFailure("BOARD_CREATE", ack));
-  }, [emitAck, selectedRoomId, currentUserId, cards.length]);
+  }, [emitBoard, selectedRoomId, currentUserId, cards.length]);
 
   return {
     handleSendMessage,

@@ -175,3 +175,92 @@ interface Notification {
 
 - 클라이언트는 optimistic update 후 `notification:read` 전송.
 - ACK 실패 시 read 상태 롤백 (useNotificationActions 참조).
+
+---
+
+## 7. Namespace 분리 (STEP 11)
+
+각 도메인별로 Socket.IO namespace를 분리하여 관심사를 분할한다. 동일 TCP 연결을 멀티플렉싱하므로 추가 비용 없음.
+
+| Namespace | 책임 | 이벤트 |
+|-----------|------|--------|
+| `/` (main) | 인증 / Presence / Notification | `user:join`, `user:online`, `user:offline`, `presence:snapshot`, `notification:*` |
+| `/chat` | 채팅 메시지 | `room:join`, `room:leave`, `message:send`, `message:new` |
+| `/board` | 협업 보드 + 커서 | `room:join`, `room:leave`, `board:create/move/delete`, `board:updated`, `cursor:move` |
+
+### 7.1. 규칙
+
+- **인증 미들웨어는 모든 namespace에 동일하게 적용** (`io.use(socketAuthMiddleware)` + 각 nsp.use).
+- **Room은 namespace별로 독립**된 이름공간. 같은 `roomId`라도 namespace가 다르면 다른 Room.
+- **Cross-namespace 이벤트 전송**은 `mainIo.to(userRoom(userId)).emit(...)` 처럼 명시적으로 사용.
+  - 예: `/board`의 `BOARD_CREATE` 핸들러가 main namespace로 `notification:new` 전송.
+
+### 7.2. 클라이언트 사용법
+
+- `useSocketEmitAck({ namespace: eNamespace.board })` — 특정 namespace 사용.
+- `useSocketEvent({ event, handler, namespace })` — 특정 namespace 이벤트 구독.
+- 기본값은 `eNamespace.main`.
+
+---
+
+## 8. Scaling — Redis Adapter (STEP 12)
+
+### 8.1. 다중 인스턴스 운영
+
+- 환경변수 `REDIS_URL` 이 설정되면 `@socket.io/redis-adapter` 자동 적용.
+- 미설정 시 in-memory adapter (단일 인스턴스 한정).
+- 모든 인스턴스가 같은 Redis pub/sub을 통해 Room 메시지를 공유.
+
+### 8.2. 주의사항
+
+- DedupStore, NotificationStore, RateLimiter 등 **인스턴스 로컬 상태**는 여전히 프로세스 단위.
+- 프로덕션 확장 시 Redis 기반 분산 상태 저장으로 마이그레이션 필요.
+- 알림 같은 사용자별 데이터는 DB로 영속화 권장.
+
+---
+
+## 9. Performance (STEP 13)
+
+### 9.1. 서버 — Token Bucket Rate Limiter
+
+- per-socket per-event 단위로 버킷 관리 (`RateLimiter`).
+- 정책: 일반 이벤트 capacity 30, 충전 10/s.
+- 한도 초과 시 `INTERNAL_ERROR` ACK + "rate limit exceeded".
+
+### 9.2. 클라이언트 — Throttle / Debounce
+
+| 훅 | 용도 |
+|----|------|
+| `useThrottledEmit` | 고빈도 이벤트 (cursor 등): leading edge + trailing emit |
+| `useDebouncedEmit` | 입력 종료 후 1회 emit (검색 자동완성 등) |
+
+- 두 훅 모두 ACK 없는 fire-and-forget. 신뢰성이 중요하면 `useSocketEmitAck` 사용.
+- `requestId`는 자동 포함.
+
+---
+
+## 10. Logging & Monitoring (STEP 14)
+
+### 10.1. HTTP 로깅
+
+- `httpLogger` 미들웨어가 method/path/status/elapsedMs 자동 기록.
+- 모든 `/auth/*` 라우트에 적용됨.
+
+### 10.2. 소켓 이벤트 자동 로깅
+
+- `installEventLogger(socket)` 가 모든 인바운드 이벤트의 처리 시간/ACK 결과 기록.
+- `cursor:move` 같은 고빈도 이벤트는 자동 제외 (HIGH_FREQ_EVENTS).
+- ACK 콜백을 후크하여 `ok: true/false` 분류.
+
+### 10.3. 에러 추적
+
+- `socket.on("error", ...)` 핸들러가 모든 namespace에 자동 등록.
+- err.message + stack 모두 pino로 구조화 로깅.
+
+### 10.4. 로그 형식 (pino)
+
+```
+{"level":"info","socketId":"abc","userId":"u1","event":"message:send","ok":true,"elapsedMs":12,"msg":"socket event handled"}
+```
+
+- 프로덕션에서는 pino-pretty 제거하고 JSON 라인을 그대로 수집기(Datadog/Loki 등)로 전송.

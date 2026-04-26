@@ -24,6 +24,8 @@ const createWrapper = (socket: Socket): React.FC<PropsWithChildren> =>
             {
                 value: {
                     socket,
+                    boardSocket: socket,
+                    chatSocket: socket,
                     connection: {
                         isConnected: true,
                         transport: "websocket",

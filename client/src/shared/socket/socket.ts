@@ -1,24 +1,38 @@
 import { io, Socket } from "socket.io-client";
+import type { Namespace } from "./namespaces";
 
-let socket: Socket | null = null;
+const socketsByNamespace = new Map<string, Socket>();
+let baseUrl: string | null = null;
 
-export const getSocket = (url: string): Socket => {
-  if (!socket) {
-    socket = io(url, {
-      transports: ["websocket"],
-      autoConnect: false,
-      reconnection: true,
-      reconnectionAttempts: 5,
-      reconnectionDelay: 1000,
-      withCredentials: true,
+const buildUrl = (url: string, namespace: Namespace): string => {
+    // socket.io-client는 URL 끝의 namespace path를 자동 인식
+    if (namespace === "/") return url;
+    return `${url}${namespace}`;
+};
+
+export const getSocket = (url: string, namespace: Namespace = "/"): Socket => {
+    baseUrl = url;
+    const cached = socketsByNamespace.get(namespace);
+    if (cached) return cached;
+
+    const socket = io(buildUrl(url, namespace), {
+        transports: ["websocket"],
+        autoConnect: false,
+        reconnection: true,
+        reconnectionAttempts: 5,
+        reconnectionDelay: 1000,
+        withCredentials: true,
     });
-  }
-  return socket;
+    socketsByNamespace.set(namespace, socket);
+    return socket;
 };
 
 export const disposeSocket = (): void => {
-  if (socket) {
-    socket.disconnect();
-    socket = null;
-  }
+    for (const socket of socketsByNamespace.values()) {
+        socket.disconnect();
+    }
+    socketsByNamespace.clear();
+    baseUrl = null;
 };
+
+export const getBaseUrl = (): string | null => baseUrl;

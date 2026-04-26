@@ -36,7 +36,7 @@ export function HomeContainer() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const { socket, connection } = useSocket();
 
-  const { emitAck } = useHomeSocket({
+  const { emitMain, emitBoard, emitChat } = useHomeSocket({
     currentUserId,
     selectedRoomId,
     isConnected: connection.isConnected,
@@ -55,14 +55,15 @@ export function HomeContainer() {
     handleCreateCard,
   } = useHomeActions({
     socket,
-    emitAck,
+    emitChat,
+    emitBoard,
     selectedRoomId,
     currentUserId,
     cards,
   });
 
   const { handleMarkNotificationRead } = useNotificationActions({
-    emitAck,
+    emitAck: emitMain,
     setNotifications,
   });
 

@@ -7,29 +7,37 @@ import {
   useState,
 } from "react";
 import { getSocket } from "./socket";
+import { eNamespace } from "./namespaces";
+import type { Namespace } from "./namespaces";
 import type { Socket } from "socket.io-client";
 import type { ConnectionState } from "@/shared/model";
 import { initialConnectionState } from "@/shared/const";
 import type { iSocketProvider } from "./socket.type";
 
-export type SocketContextValue = {
-  socket: Socket;
+export interface SocketContextValue {
+  socket: Socket;             // main namespace (인증/presence/notification)
+  boardSocket: Socket;        // /board namespace
+  chatSocket: Socket;         // /chat namespace
   connection: ConnectionState;
-};
+}
 
 export const SocketContext = createContext<SocketContextValue | null>(null);
+
+const namespacesToConnect: Namespace[] = [eNamespace.main, eNamespace.board, eNamespace.chat];
 
 export const SocketProvider = ({
   children,
   url,
 }: iSocketProvider) => {
-  const [socket] = useState<Socket>(() => getSocket(url));
-  const [connection, setConnection] = useState<ConnectionState>(
-    initialConnectionState
-  );
+  const [sockets] = useState<Record<Namespace, Socket>>(() => ({
+    [eNamespace.main]: getSocket(url, eNamespace.main),
+    [eNamespace.board]: getSocket(url, eNamespace.board),
+    [eNamespace.chat]: getSocket(url, eNamespace.chat),
+  }));
+  const [connection, setConnection] = useState<ConnectionState>(initialConnectionState);
 
   useEffect(() => {
-    socket.connect();
+    const mainSocket = sockets[eNamespace.main];
 
     const handleConnect = () => {
       setConnection({
@@ -40,36 +48,42 @@ export const SocketProvider = ({
     };
 
     const handleDisconnect = () => {
-      setConnection((prev) => ({
-        ...prev,
-        isConnected: false,
-      }));
+      setConnection((prev) => ({ ...prev, isConnected: false }));
     };
 
     const handleError = () => {
-      setConnection((prev) => ({
-        ...prev,
-        isConnected: false,
-      }));
+      setConnection((prev) => ({ ...prev, isConnected: false }));
     };
 
-    socket.on("connect", handleConnect);
-    socket.on("disconnect", handleDisconnect);
-    socket.on("connect_error", handleError);
-    socket.on("reconnect", handleConnect);
+    // 모든 namespace 연결 시도
+    for (const ns of namespacesToConnect) {
+      sockets[ns].connect();
+    }
+
+    mainSocket.on("connect", handleConnect);
+    mainSocket.on("disconnect", handleDisconnect);
+    mainSocket.on("connect_error", handleError);
+    mainSocket.on("reconnect", handleConnect);
 
     return () => {
-      socket.off("connect", handleConnect);
-      socket.off("disconnect", handleDisconnect);
-      socket.off("connect_error", handleError);
-      socket.off("reconnect", handleConnect);
-      socket.disconnect();
+      mainSocket.off("connect", handleConnect);
+      mainSocket.off("disconnect", handleDisconnect);
+      mainSocket.off("connect_error", handleError);
+      mainSocket.off("reconnect", handleConnect);
+      for (const ns of namespacesToConnect) {
+        sockets[ns].disconnect();
+      }
     };
-  }, [socket]);
+  }, [sockets]);
 
-  const value = useMemo(
-    () => ({ socket, connection }),
-    [socket, connection]
+  const value = useMemo<SocketContextValue>(
+    () => ({
+      socket: sockets[eNamespace.main],
+      boardSocket: sockets[eNamespace.board],
+      chatSocket: sockets[eNamespace.chat],
+      connection,
+    }),
+    [sockets, connection],
   );
 
   return (

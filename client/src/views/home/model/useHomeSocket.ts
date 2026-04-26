@@ -12,6 +12,7 @@ import {
   useQueueStack,
   eClientToServerEvents,
   eServerToClientEvents,
+  eNamespace,
 } from "@/shared/socket";
 import {
   hasUserId,
@@ -48,7 +49,10 @@ export const useHomeSocket = ({
   setUsers,
   setNotifications,
 }: UseHomeSocketOptions) => {
-  const { emitAck } = useSocketEmitAck();
+  const { emitAck: emitMain } = useSocketEmitAck();
+  const { emitAck: emitBoard } = useSocketEmitAck({ namespace: eNamespace.board });
+  const { emitAck: emitChat } = useSocketEmitAck({ namespace: eNamespace.chat });
+
   const usersRef = useRef(users);
   const processedMessageIdsRef = useRef<Set<string>>(new Set());
 
@@ -59,9 +63,7 @@ export const useHomeSocket = ({
   const processQueuedMessage = useCallback(
     (nextMessage: MessagePayload) => {
       const dedupKey = `${nextMessage.roomId}:${nextMessage.userId}:${nextMessage.timestamp}:${nextMessage.message}`;
-      if (processedMessageIdsRef.current.has(dedupKey)) {
-        return;
-      }
+      if (processedMessageIdsRef.current.has(dedupKey)) return;
       processedMessageIdsRef.current.add(dedupKey);
 
       const authorName =
@@ -127,7 +129,6 @@ export const useHomeSocket = ({
   const handlePresenceSnapshot = useCallback(
     (payload: unknown) => {
       if (!hasPresenceSnapshotPayload(payload)) return;
-
       const onlineUserIds = new Set(payload.userIds);
       setUsers((prev) =>
         prev.map((user) =>
@@ -143,13 +144,11 @@ export const useHomeSocket = ({
   const handleBoardUpdated = useCallback(
     (payload: unknown) => {
       if (!hasBoardUpdatedPayload(payload) || payload.roomId !== selectedRoomId) return;
-
       setCards((prev) => {
         if (payload.action === "create") {
           if (prev.some((card) => card.id === payload.card.id)) return prev;
           return [...prev, payload.card];
         }
-
         if (payload.action === "move") {
           return prev.map((card) =>
             card.id === payload.cardId
@@ -157,7 +156,6 @@ export const useHomeSocket = ({
               : card,
           );
         }
-
         return prev.filter((card) => card.id !== payload.cardId);
       });
     },
@@ -167,7 +165,6 @@ export const useHomeSocket = ({
   const handleNotificationNew = useCallback(
     (payload: unknown) => {
       if (!hasNotification(payload)) return;
-
       setNotifications((prev) => {
         if (prev.some((item) => item.id === payload.id)) return prev;
         return [payload, ...prev];
@@ -184,51 +181,67 @@ export const useHomeSocket = ({
     [setNotifications],
   );
 
+  // 메인 namespace
   useSocketEvent({ event: eServerToClientEvents.USER_ONLINE, handler: handleUserOnline });
   useSocketEvent({ event: eServerToClientEvents.USER_OFFLINE, handler: handleUserOffline });
-  useSocketEvent({ event: eServerToClientEvents.PRESENCE_SNAPSHOT, handler: handlePresenceSnapshot });
-  useSocketEvent({ event: eServerToClientEvents.MESSAGE_NEW, handler: handleMessageNew });
-  useSocketEvent({ event: eServerToClientEvents.BOARD_UPDATED, handler: handleBoardUpdated });
-  useSocketEvent({ event: eServerToClientEvents.NOTIFICATION_NEW, handler: handleNotificationNew });
+  useSocketEvent({
+    event: eServerToClientEvents.PRESENCE_SNAPSHOT,
+    handler: handlePresenceSnapshot,
+  });
+  useSocketEvent({
+    event: eServerToClientEvents.NOTIFICATION_NEW,
+    handler: handleNotificationNew,
+  });
   useSocketEvent({
     event: eServerToClientEvents.NOTIFICATION_SNAPSHOT,
     handler: handleNotificationSnapshot,
   });
 
+  // /chat namespace
+  useSocketEvent({
+    event: eServerToClientEvents.MESSAGE_NEW,
+    handler: handleMessageNew,
+    namespace: eNamespace.chat,
+  });
+
+  // /board namespace
+  useSocketEvent({
+    event: eServerToClientEvents.BOARD_UPDATED,
+    handler: handleBoardUpdated,
+    namespace: eNamespace.board,
+  });
+
   useEffect(() => {
     if (!isConnected) return;
-
-    void emitAck(eClientToServerEvents.USER_JOIN, {}).then((ack) => {
-      if (!ack.ok) {
-        logger.warn("USER_JOIN failed", ack.error);
-      }
+    void emitMain(eClientToServerEvents.USER_JOIN, {}).then((ack) => {
+      if (!ack.ok) logger.warn("USER_JOIN failed", ack.error);
     });
-  }, [isConnected, emitAck]);
+  }, [isConnected, emitMain]);
 
   useEffect(() => {
     if (!isConnected) return;
-
-    void emitAck(eClientToServerEvents.ROOM_JOIN, { roomId: selectedRoomId }).then((ack) => {
-      if (!ack.ok) {
-        logger.warn("ROOM_JOIN failed", ack.error);
-      }
+    void emitChat(eClientToServerEvents.ROOM_JOIN, { roomId: selectedRoomId }).then((ack) => {
+      if (!ack.ok) logger.warn("/chat ROOM_JOIN failed", ack.error);
     });
-
+    void emitBoard(eClientToServerEvents.ROOM_JOIN, { roomId: selectedRoomId }).then((ack) => {
+      if (!ack.ok) logger.warn("/board ROOM_JOIN failed", ack.error);
+    });
     return () => {
-      void emitAck(eClientToServerEvents.ROOM_LEAVE, { roomId: selectedRoomId });
+      void emitChat(eClientToServerEvents.ROOM_LEAVE, { roomId: selectedRoomId });
+      void emitBoard(eClientToServerEvents.ROOM_LEAVE, { roomId: selectedRoomId });
     };
-  }, [isConnected, selectedRoomId, emitAck]);
+  }, [isConnected, selectedRoomId, emitChat, emitBoard]);
 
   useSocketReconnect(
     useCallback(() => {
       processedMessageIdsRef.current.clear();
-      void emitAck(eClientToServerEvents.USER_JOIN, {});
-      void emitAck(eClientToServerEvents.ROOM_JOIN, { roomId: selectedRoomId });
-    }, [emitAck, selectedRoomId]),
+      void emitMain(eClientToServerEvents.USER_JOIN, {});
+      void emitChat(eClientToServerEvents.ROOM_JOIN, { roomId: selectedRoomId });
+      void emitBoard(eClientToServerEvents.ROOM_JOIN, { roomId: selectedRoomId });
+    }, [emitMain, emitChat, emitBoard, selectedRoomId]),
   );
 
-  // currentUserId는 재연결 로직의 명시적 의존성으로 유지 (로그인 유저 변경 감지용)
   void currentUserId;
 
-  return { emitAck };
+  return { emitMain, emitBoard, emitChat };
 };
