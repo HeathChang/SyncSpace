@@ -264,3 +264,64 @@ interface Notification {
 ```
 
 - 프로덕션에서는 pino-pretty 제거하고 JSON 라인을 그대로 수집기(Datadog/Loki 등)로 전송.
+
+---
+
+## 11. 영속화 (Prisma + SQLite/PostgreSQL)
+
+### 11.1. 데이터 모델
+
+| 모델 | 책임 |
+|------|------|
+| `User` | 인증 정보 (id, name, **passwordHash**) |
+| `Room` | 채팅/보드 룸 메타데이터 |
+| `Message` | 영속 메시지 + roomId/createdAt 인덱스 |
+| `BoardCard` | 보드 카드 (column, tags JSON) |
+| `Notification` | 사용자별 알림, readAt nullable |
+
+### 11.2. 환경 설정
+
+- `DATABASE_URL` 환경변수로 SQLite/Postgres 전환.
+- `npm run db:migrate` 로 마이그레이션, `npm run db:seed` 로 시드.
+- 학습/로컬: `file:./dev.db`. 프로덕션: `postgresql://...`.
+
+### 11.3. HTTP API (인증 필요)
+
+| 엔드포인트 | 용도 |
+|-----------|------|
+| `GET /api/rooms` | 전체 룸 목록 |
+| `GET /api/rooms/:roomId/messages?limit=50` | 룸 메시지 히스토리 |
+| `GET /api/rooms/:roomId/cards` | 룸의 보드 카드 |
+| `GET /api/users` | 유저 목록 |
+| `GET /health` / `GET /ready` | 헬스 / DB readiness |
+
+### 11.4. 클라이언트
+
+- `useInitialData` 훅이 로그인 후 자동으로 REST API 호출 → 룸/유저/메시지/카드 로드.
+- mock-data는 Storybook에서만 사용.
+
+---
+
+## 12. 분산 상태 (선택적 Redis 활성화)
+
+| 컴포넌트 | 단일 인스턴스 | 멀티 인스턴스 (REDIS_URL 설정 시) |
+|----------|---------------|-----------------------------------|
+| Socket.IO Adapter | in-memory | `@socket.io/redis-adapter` (자동) |
+| DedupStore | `DedupStore` (in-memory) | `RedisDedupStore` (자동 전환) |
+| RateLimiter | in-memory | TODO: 분산 token bucket |
+| NotificationStore | DB (Prisma) | DB (Prisma) |
+
+- `REDIS_URL` 환경변수 존재 시 분산 모드로 자동 전환. 없으면 in-memory fallback.
+- DedupStore 인터페이스 (`IDedupStore`)로 추상화되어 핸들러는 구현체를 모름.
+
+---
+
+## 13. Graceful Shutdown
+
+`SIGINT`/`SIGTERM` 수신 시:
+1. HTTP 서버 close (in-flight 요청 완료 대기)
+2. Socket.IO close
+3. Prisma `$disconnect()`
+4. `process.exit(0)`
+
+k8s/Docker 환경에서 안전한 롤링 배포 가능.

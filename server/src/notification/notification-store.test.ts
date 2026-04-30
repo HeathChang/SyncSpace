@@ -1,105 +1,170 @@
+/**
+ * NotificationStore는 Prisma 의존이라 단위 테스트에서는 jest mock으로 격리.
+ * 실제 DB 동작은 별도 e2e/integration 테스트로 검증.
+ */
+
+const createMock = jest.fn();
+const findManyMock = jest.fn();
+const findUniqueMock = jest.fn();
+const updateMock = jest.fn();
+const countMock = jest.fn();
+
+jest.mock("../db/prisma", () => ({
+    prisma: {
+        notification: {
+            create: (...args: unknown[]) => createMock(...args),
+            findMany: (...args: unknown[]) => findManyMock(...args),
+            findUnique: (...args: unknown[]) => findUniqueMock(...args),
+            update: (...args: unknown[]) => updateMock(...args),
+            count: (...args: unknown[]) => countMock(...args),
+        },
+    },
+}));
+
 import { NotificationStore } from "./notification-store";
 
 describe("NotificationStore", () => {
+    beforeEach(() => {
+        createMock.mockReset();
+        findManyMock.mockReset();
+        findUniqueMock.mockReset();
+        updateMock.mockReset();
+        countMock.mockReset();
+    });
+
     describe("create", () => {
-        it("should return a notification with generated id and timestamp", () => {
-            const store = new NotificationStore();
-            const result = store.create({
-                userId: "u1",
-                kind: "board:assigned",
-                title: "할당",
-                body: "카드가 할당되었습니다",
-            });
-
-            expect(result.id).toBeTruthy();
-            expect(result.userId).toBe("u1");
-            expect(result.createdAt).toBeTruthy();
-            expect(result.readAt).toBeUndefined();
-        });
-
-        it("should store notification in user's list", () => {
-            const store = new NotificationStore();
-            store.create({
+        it("should serialize meta as JSON and return record", async () => {
+            createMock.mockResolvedValue({
+                id: "n1",
                 userId: "u1",
                 kind: "board:assigned",
                 title: "t",
                 body: "b",
+                meta: '{"roomId":"r1"}',
+                createdAt: new Date("2026-04-28T00:00:00Z"),
+                readAt: null,
             });
 
-            expect(store.listForUser("u1")).toHaveLength(1);
-            expect(store.listForUser("u2")).toHaveLength(0);
+            const store = new NotificationStore();
+            const result = await store.create({
+                userId: "u1",
+                kind: "board:assigned",
+                title: "t",
+                body: "b",
+                meta: { roomId: "r1" },
+            });
+
+            expect(createMock).toHaveBeenCalledWith({
+                data: {
+                    userId: "u1",
+                    kind: "board:assigned",
+                    title: "t",
+                    body: "b",
+                    meta: '{"roomId":"r1"}',
+                },
+            });
+            expect(result.id).toBe("n1");
+            expect(result.meta).toEqual({ roomId: "r1" });
+            expect(result.readAt).toBeUndefined();
         });
 
-        it("should cap at 100 per user and drop oldest", () => {
+        it("should accept missing meta", async () => {
+            createMock.mockResolvedValue({
+                id: "n1",
+                userId: "u1",
+                kind: "system:info",
+                title: "t",
+                body: "b",
+                meta: null,
+                createdAt: new Date(),
+                readAt: null,
+            });
+
             const store = new NotificationStore();
-            for (let index = 0; index < 105; index += 1) {
-                store.create({
-                    userId: "u1",
-                    kind: "system:info",
-                    title: `t-${index}`,
-                    body: "b",
-                });
-            }
-            expect(store.listForUser("u1")).toHaveLength(100);
+            const result = await store.create({
+                userId: "u1",
+                kind: "system:info",
+                title: "t",
+                body: "b",
+            });
+
+            expect(result.meta).toBeUndefined();
         });
     });
 
     describe("markRead", () => {
-        it("should mark an unread notification as read", () => {
-            const store = new NotificationStore();
-            const created = store.create({
+        it("should mark unread notification as read", async () => {
+            findUniqueMock.mockResolvedValue({
+                id: "n1",
                 userId: "u1",
-                kind: "system:info",
-                title: "t",
-                body: "b",
+                readAt: null,
             });
+            updateMock.mockResolvedValue({});
 
-            expect(store.markRead("u1", created.id)).toBe(true);
-            const list = store.listForUser("u1");
-            expect(list[0].readAt).toBeTruthy();
+            const store = new NotificationStore();
+            expect(await store.markRead("u1", "n1")).toBe(true);
+            expect(updateMock).toHaveBeenCalledWith({
+                where: { id: "n1" },
+                data: { readAt: expect.any(Date) },
+            });
         });
 
-        it("should return false when notification not found", () => {
+        it("should return false when notification not found", async () => {
+            findUniqueMock.mockResolvedValue(null);
             const store = new NotificationStore();
-            expect(store.markRead("u1", "missing")).toBe(false);
+            expect(await store.markRead("u1", "missing")).toBe(false);
         });
 
-        it("should return false when already read", () => {
-            const store = new NotificationStore();
-            const created = store.create({
+        it("should return false when already read", async () => {
+            findUniqueMock.mockResolvedValue({
+                id: "n1",
                 userId: "u1",
-                kind: "system:info",
-                title: "t",
-                body: "b",
+                readAt: new Date(),
             });
-            store.markRead("u1", created.id);
-            expect(store.markRead("u1", created.id)).toBe(false);
+            const store = new NotificationStore();
+            expect(await store.markRead("u1", "n1")).toBe(false);
         });
 
-        it("should isolate notifications by user", () => {
-            const store = new NotificationStore();
-            const created = store.create({
-                userId: "u1",
-                kind: "system:info",
-                title: "t",
-                body: "b",
+        it("should return false when notification belongs to other user", async () => {
+            findUniqueMock.mockResolvedValue({
+                id: "n1",
+                userId: "u2",
+                readAt: null,
             });
-            expect(store.markRead("u2", created.id)).toBe(false);
+            const store = new NotificationStore();
+            expect(await store.markRead("u1", "n1")).toBe(false);
         });
     });
 
     describe("unreadCount", () => {
-        it("should count only unread items", () => {
+        it("should query with readAt: null", async () => {
+            countMock.mockResolvedValue(3);
             const store = new NotificationStore();
-            const a = store.create({ userId: "u1", kind: "system:info", title: "t", body: "b" });
-            store.create({ userId: "u1", kind: "system:info", title: "t", body: "b" });
-            store.markRead("u1", a.id);
-            expect(store.unreadCount("u1")).toBe(1);
+            expect(await store.unreadCount("u1")).toBe(3);
+            expect(countMock).toHaveBeenCalledWith({
+                where: { userId: "u1", readAt: null },
+            });
         });
+    });
 
-        it("should return 0 for unknown user", () => {
+    describe("listForUser", () => {
+        it("should map prisma rows to records", async () => {
+            findManyMock.mockResolvedValue([
+                {
+                    id: "n1",
+                    userId: "u1",
+                    kind: "system:info",
+                    title: "t",
+                    body: "b",
+                    meta: null,
+                    createdAt: new Date("2026-04-28T00:00:00Z"),
+                    readAt: null,
+                },
+            ]);
             const store = new NotificationStore();
-            expect(store.unreadCount("u-unknown")).toBe(0);
+            const list = await store.listForUser("u1");
+            expect(list.length).toBe(1);
+            expect(list[0].id).toBe("n1");
         });
     });
 });

@@ -38,3 +38,10 @@ next-env.d.ts
 # AI tool configs (개인 환경 — .ruler/는 공유)
 CLAUDE.md
 .cursorrules
+
+# SQLite dev DB (학습용, 커밋 금지)
+server/prisma/*.db
+server/prisma/*.db-journal
+
+# Storybook 빌드 결과물
+client/storybook-static

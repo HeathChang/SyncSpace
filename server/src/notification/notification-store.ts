@@ -1,7 +1,16 @@
-import { randomUUID } from "crypto";
-import type { Notification, NotificationKind } from "./types";
+import { prisma } from "../db/prisma";
+import type { NotificationKind } from "./types";
 
-const MAX_PER_USER = 100;
+export interface NotificationRecord {
+    id: string;
+    userId: string;
+    kind: NotificationKind;
+    title: string;
+    body: string;
+    createdAt: string;
+    readAt?: string;
+    meta?: Record<string, string>;
+}
 
 interface CreateInput {
     userId: string;
@@ -11,49 +20,78 @@ interface CreateInput {
     meta?: Record<string, string>;
 }
 
-export class NotificationStore {
-    private readonly notifications = new Map<string, Notification[]>();
-
-    create(input: CreateInput): Notification {
-        const notification: Notification = {
-            id: randomUUID(),
-            userId: input.userId,
-            kind: input.kind,
-            title: input.title,
-            body: input.body,
-            createdAt: new Date().toISOString(),
-            meta: input.meta,
-        };
-
-        const list = this.notifications.get(input.userId) ?? [];
-        list.unshift(notification);
-
-        if (list.length > MAX_PER_USER) {
-            list.length = MAX_PER_USER;
+const decodeMeta = (raw: string | null): Record<string, string> | undefined => {
+    if (!raw) return undefined;
+    try {
+        const parsed = JSON.parse(raw) as unknown;
+        if (parsed && typeof parsed === "object") {
+            return parsed as Record<string, string>;
         }
+    } catch {
+        // fall through
+    }
+    return undefined;
+};
 
-        this.notifications.set(input.userId, list);
-        return notification;
+const toRecord = (row: {
+    id: string;
+    userId: string;
+    kind: string;
+    title: string;
+    body: string;
+    meta: string | null;
+    createdAt: Date;
+    readAt: Date | null;
+}): NotificationRecord => ({
+    id: row.id,
+    userId: row.userId,
+    kind: row.kind as NotificationKind,
+    title: row.title,
+    body: row.body,
+    createdAt: row.createdAt.toISOString(),
+    readAt: row.readAt ? row.readAt.toISOString() : undefined,
+    meta: decodeMeta(row.meta),
+});
+
+export class NotificationStore {
+    async create(input: CreateInput): Promise<NotificationRecord> {
+        const row = await prisma.notification.create({
+            data: {
+                userId: input.userId,
+                kind: input.kind,
+                title: input.title,
+                body: input.body,
+                meta: input.meta ? JSON.stringify(input.meta) : null,
+            },
+        });
+        return toRecord(row);
     }
 
-    listForUser(userId: string): Notification[] {
-        return this.notifications.get(userId) ?? [];
+    async listForUser(userId: string, limit = 100): Promise<NotificationRecord[]> {
+        const rows = await prisma.notification.findMany({
+            where: { userId },
+            orderBy: { createdAt: "desc" },
+            take: limit,
+        });
+        return rows.map(toRecord);
     }
 
-    markRead(userId: string, notificationId: string): boolean {
-        const list = this.notifications.get(userId);
-        if (!list) return false;
+    async markRead(userId: string, notificationId: string): Promise<boolean> {
+        const found = await prisma.notification.findUnique({
+            where: { id: notificationId },
+        });
+        if (!found || found.userId !== userId || found.readAt) return false;
 
-        const found = list.find((item) => item.id === notificationId);
-        if (!found || found.readAt) return false;
-
-        found.readAt = new Date().toISOString();
+        await prisma.notification.update({
+            where: { id: notificationId },
+            data: { readAt: new Date() },
+        });
         return true;
     }
 
-    unreadCount(userId: string): number {
-        const list = this.notifications.get(userId);
-        if (!list) return 0;
-        return list.filter((item) => !item.readAt).length;
+    async unreadCount(userId: string): Promise<number> {
+        return prisma.notification.count({
+            where: { userId, readAt: null },
+        });
     }
 }

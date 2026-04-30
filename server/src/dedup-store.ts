@@ -1,8 +1,11 @@
 /**
- * requestId 기반 중복 요청 방지 저장소.
+ * requestId 기반 중복 요청 방지 저장소 (in-memory).
  * - 소켓별로 최근 N개의 requestId를 보관.
  * - TTL이 지난 requestId는 자동으로 만료.
+ * - 멀티 인스턴스에서는 storage/redis-dedup-store 사용.
  */
+
+import type { IDedupStore } from "./storage/dedup-interface";
 
 interface DedupEntry {
     requestIds: Set<string>;
@@ -14,7 +17,7 @@ interface DedupStoreOptions {
     maxPerSocket: number;
 }
 
-export class DedupStore {
+export class DedupStore implements IDedupStore {
     private readonly store = new Map<string, DedupEntry>();
     private readonly ttlMs: number;
     private readonly maxPerSocket: number;

@@ -1,20 +1,38 @@
-import type { Namespace, Server, Socket } from "socket.io";
-import { randomUUID } from "crypto";
+import type { Namespace, Server } from "socket.io";
 import { eClientToServerEvents, eServerToClientEvents } from "../socket.types";
 import type { ClientToServerEvents, ServerToClientEvents } from "../socket.types";
-import type { AckCallback, RequestEnvelope } from "../socket.envelope";
-import { eErrorCode } from "../socket.envelope";
-import { DedupStore } from "../dedup-store";
+import type { IDedupStore } from "../storage/dedup-interface";
 import { RateLimiter } from "../rate-limiter";
 import { NotificationStore } from "../notification/notification-store";
+import { eErrorCode } from "../socket.envelope";
 import { logger } from "../logger";
+import { validateAndDedup, consumeRate } from "./handler-utils";
+import {
+    boardCreateSchema,
+    boardMoveSchema,
+    boardDeleteSchema,
+    cursorMoveSchema,
+    roomReqSchema,
+} from "../schemas/event-schemas";
+import { z } from "zod";
+import {
+    createCard,
+    moveCard,
+    deleteCard,
+} from "../repositories/board-repository";
 
-const BOARD_COLUMNS = new Set(["todo", "inProgress", "done"]);
+const requestIdField = z.object({ requestId: z.string().min(1) });
+
+const roomReqEnvelope = roomReqSchema.merge(requestIdField);
+const boardCreateEnvelope = boardCreateSchema.merge(requestIdField);
+const boardMoveEnvelope = boardMoveSchema.merge(requestIdField);
+const boardDeleteEnvelope = boardDeleteSchema.merge(requestIdField);
+const cursorMoveEnvelope = cursorMoveSchema.merge(requestIdField);
 
 interface InstallBoardOptions {
     nsp: Namespace<ClientToServerEvents, ServerToClientEvents>;
     mainIo: Server<ClientToServerEvents, ServerToClientEvents>;
-    dedupStore: DedupStore;
+    dedupStore: IDedupStore;
     rateLimiter: RateLimiter;
     notificationStore: NotificationStore;
     userRoom: (userId: string) => string;
@@ -35,110 +53,77 @@ export const installBoardHandlers = ({
             "board namespace connected",
         );
 
-        const checkDedup = <TPayload, TAckData>(
-            payload: RequestEnvelope<TPayload>,
-            ack: AckCallback<TAckData>,
-        ): boolean => {
-            if (!payload?.requestId) {
-                ack({
-                    ok: false,
-                    error: { code: eErrorCode.INVALID_INPUT, message: "requestId is required" },
-                });
-                return false;
-            }
-            if (dedupStore.isDuplicate(socket.id, payload.requestId)) {
-                ack({
-                    ok: false,
-                    error: { code: eErrorCode.DUPLICATE_REQUEST, message: "duplicate request" },
-                });
-                return false;
-            }
-            dedupStore.register(socket.id, payload.requestId);
-            return true;
-        };
-
-        const checkRate = <TAckData>(event: string, ack: AckCallback<TAckData>): boolean => {
-            if (rateLimiter.consume(socket.id, event)) return true;
-            ack({
-                ok: false,
-                error: {
-                    code: eErrorCode.INTERNAL_ERROR,
-                    message: "rate limit exceeded",
-                },
-            });
-            return false;
-        };
-
-        socket.on(eClientToServerEvents.ROOM_JOIN, (payload, ack) => {
-            if (!checkDedup(payload, ack)) return;
-            const { roomId } = payload;
-            if (!roomId) {
-                ack({
-                    ok: false,
-                    error: { code: eErrorCode.ROOM_REQUIRED, message: "roomId is required" },
-                });
-                return;
-            }
-            socket.join(roomId);
+        socket.on(eClientToServerEvents.ROOM_JOIN, async (rawPayload, ack) => {
+            const validated = await validateAndDedup(
+                socket.id,
+                rawPayload,
+                roomReqEnvelope,
+                ack,
+                dedupStore,
+            );
+            if (!validated) return;
+            socket.join(validated.roomId);
             ack({ ok: true, data: undefined });
         });
 
-        socket.on(eClientToServerEvents.ROOM_LEAVE, (payload, ack) => {
-            if (!checkDedup(payload, ack)) return;
-            const { roomId } = payload;
-            if (!roomId) {
-                ack({
-                    ok: false,
-                    error: { code: eErrorCode.ROOM_REQUIRED, message: "roomId is required" },
-                });
-                return;
-            }
-            socket.leave(roomId);
+        socket.on(eClientToServerEvents.ROOM_LEAVE, async (rawPayload, ack) => {
+            const validated = await validateAndDedup(
+                socket.id,
+                rawPayload,
+                roomReqEnvelope,
+                ack,
+                dedupStore,
+            );
+            if (!validated) return;
+            socket.leave(validated.roomId);
             ack({ ok: true, data: undefined });
         });
 
-        socket.on(eClientToServerEvents.BOARD_CREATE, (payload, ack) => {
-            if (!checkRate(eClientToServerEvents.BOARD_CREATE, ack)) return;
-            if (!checkDedup(payload, ack)) return;
+        socket.on(eClientToServerEvents.BOARD_CREATE, async (rawPayload, ack) => {
+            if (!consumeRate(rateLimiter, socket.id, eClientToServerEvents.BOARD_CREATE, ack)) return;
 
-            const { roomId, cardId, title, assigneeId, tags } = payload;
-            const trimmedTitle = title?.trim() ?? "";
+            const validated = await validateAndDedup(
+                socket.id,
+                rawPayload,
+                boardCreateEnvelope,
+                ack,
+                dedupStore,
+            );
+            if (!validated) return;
+
+            const { roomId, cardId, title, assigneeId, tags } = validated;
             const actorId = authenticatedUserId;
 
-            if (!roomId || !cardId || !assigneeId || !trimmedTitle) {
-                ack({
-                    ok: false,
-                    error: {
-                        code: eErrorCode.INVALID_INPUT,
-                        message: "roomId, cardId, assigneeId, title are required",
-                    },
-                });
-                return;
-            }
+            const created = await createCard({
+                id: cardId,
+                roomId,
+                title,
+                assigneeId,
+                tags: tags.length > 0 ? tags : ["신규"],
+            });
 
             nsp.to(roomId).emit(eServerToClientEvents.BOARD_UPDATED, {
                 roomId,
                 action: "create",
                 card: {
-                    id: cardId,
-                    title: trimmedTitle,
-                    assigneeId,
-                    column: "todo",
-                    updatedAt: "방금 전",
-                    tags: tags.length > 0 ? tags : ["신규"],
+                    id: created.id,
+                    title: created.title,
+                    assigneeId: created.assigneeId,
+                    column: created.column,
+                    updatedAt: created.updatedAt.toISOString(),
+                    tags: created.tags,
                 },
             });
 
             if (assigneeId !== actorId) {
                 const actorName = (socket.data.userName as string | undefined) ?? actorId;
-                const notification = notificationStore.create({
+                const notification = await notificationStore.create({
                     userId: assigneeId,
                     kind: "board:assigned",
                     title: "새 작업이 할당되었습니다",
-                    body: `${actorName}님이 "${trimmedTitle}" 카드를 할당했습니다.`,
+                    body: `${actorName}님이 "${title}" 카드를 할당했습니다.`,
                     meta: { roomId, cardId },
                 });
-                // 알림은 메인 namespace의 개인 room으로 전송
                 mainIo.to(userRoom(assigneeId)).emit(
                     eServerToClientEvents.NOTIFICATION_NEW,
                     notification,
@@ -148,65 +133,68 @@ export const installBoardHandlers = ({
             ack({ ok: true, data: undefined });
         });
 
-        socket.on(eClientToServerEvents.BOARD_MOVE, (payload, ack) => {
-            if (!checkRate(eClientToServerEvents.BOARD_MOVE, ack)) return;
-            if (!checkDedup(payload, ack)) return;
+        socket.on(eClientToServerEvents.BOARD_MOVE, async (rawPayload, ack) => {
+            if (!consumeRate(rateLimiter, socket.id, eClientToServerEvents.BOARD_MOVE, ack)) return;
 
-            const { roomId, cardId, toColumn } = payload;
-            if (!roomId || !cardId || !BOARD_COLUMNS.has(toColumn)) {
+            const validated = await validateAndDedup(
+                socket.id,
+                rawPayload,
+                boardMoveEnvelope,
+                ack,
+                dedupStore,
+            );
+            if (!validated) return;
+
+            const moved = await moveCard(validated.cardId, validated.toColumn);
+            if (!moved) {
                 ack({
                     ok: false,
-                    error: {
-                        code: eErrorCode.INVALID_INPUT,
-                        message: "roomId, cardId, toColumn are required",
-                    },
+                    error: { code: eErrorCode.INVALID_INPUT, message: "card not found" },
                 });
                 return;
             }
 
-            nsp.to(roomId).emit(eServerToClientEvents.BOARD_UPDATED, {
-                roomId,
+            nsp.to(validated.roomId).emit(eServerToClientEvents.BOARD_UPDATED, {
+                roomId: validated.roomId,
                 action: "move",
-                cardId,
-                toColumn,
-                updatedAt: "방금 전",
+                cardId: validated.cardId,
+                toColumn: validated.toColumn,
+                updatedAt: moved.updatedAt.toISOString(),
             });
             ack({ ok: true, data: undefined });
         });
 
-        socket.on(eClientToServerEvents.BOARD_DELETE, (payload, ack) => {
-            if (!checkRate(eClientToServerEvents.BOARD_DELETE, ack)) return;
-            if (!checkDedup(payload, ack)) return;
+        socket.on(eClientToServerEvents.BOARD_DELETE, async (rawPayload, ack) => {
+            if (!consumeRate(rateLimiter, socket.id, eClientToServerEvents.BOARD_DELETE, ack)) return;
 
-            const { roomId, cardId } = payload;
-            if (!roomId || !cardId) {
-                ack({
-                    ok: false,
-                    error: {
-                        code: eErrorCode.INVALID_INPUT,
-                        message: "roomId and cardId are required",
-                    },
-                });
-                return;
-            }
+            const validated = await validateAndDedup(
+                socket.id,
+                rawPayload,
+                boardDeleteEnvelope,
+                ack,
+                dedupStore,
+            );
+            if (!validated) return;
 
-            nsp.to(roomId).emit(eServerToClientEvents.BOARD_UPDATED, {
-                roomId,
+            await deleteCard(validated.cardId);
+
+            nsp.to(validated.roomId).emit(eServerToClientEvents.BOARD_UPDATED, {
+                roomId: validated.roomId,
                 action: "delete",
-                cardId,
+                cardId: validated.cardId,
             });
             ack({ ok: true, data: undefined });
         });
 
-        socket.on(eClientToServerEvents.CURSOR_MOVE, (payload) => {
+        socket.on(eClientToServerEvents.CURSOR_MOVE, (rawPayload) => {
             if (!rateLimiter.consume(socket.id, eClientToServerEvents.CURSOR_MOVE)) return;
-            // cursor:move는 ACK 없는 fire-and-forget (고빈도)
-            // dedup도 비용 대비 가치가 낮아 생략
-            void payload;
+            const parsed = cursorMoveEnvelope.safeParse(rawPayload);
+            if (!parsed.success) return;
+            void parsed.data;
         });
 
-        socket.on("disconnect", () => {
-            dedupStore.remove(socket.id);
+        socket.on("disconnect", async () => {
+            await dedupStore.remove(socket.id);
             rateLimiter.removeSocket(socket.id);
         });
     });

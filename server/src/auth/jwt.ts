@@ -5,8 +5,25 @@ export interface JwtPayload {
     name: string;
 }
 
-const JWT_SECRET = process.env.JWT_SECRET ?? "dev-only-secret-change-in-production";
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN ?? "2h";
+
+const resolveSecret = (): string => {
+    const fromEnv = process.env.JWT_SECRET;
+    if (fromEnv && fromEnv.length >= 32) {
+        return fromEnv;
+    }
+
+    if (process.env.NODE_ENV === "production") {
+        throw new Error(
+            "JWT_SECRET must be set to a value of at least 32 characters in production",
+        );
+    }
+
+    // dev/test 환경에서만 fallback 허용
+    return "dev-only-secret-please-change-in-production-32-chars";
+};
+
+const JWT_SECRET = resolveSecret();
 
 export const signAccessToken = (payload: JwtPayload): string => {
     return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN } as jwt.SignOptions);

@@ -1,16 +1,22 @@
 import type { Namespace } from "socket.io";
-import { randomUUID } from "crypto";
 import { eClientToServerEvents, eServerToClientEvents } from "../socket.types";
 import type { ClientToServerEvents, ServerToClientEvents } from "../socket.types";
-import type { AckCallback, RequestEnvelope } from "../socket.envelope";
-import { eErrorCode } from "../socket.envelope";
-import { DedupStore } from "../dedup-store";
+import type { IDedupStore } from "../storage/dedup-interface";
 import { RateLimiter } from "../rate-limiter";
 import { logger } from "../logger";
+import { validateAndDedup, consumeRate } from "./handler-utils";
+import { messageSendSchema, roomReqSchema } from "../schemas/event-schemas";
+import { z } from "zod";
+import { createMessage } from "../repositories/message-repository";
+
+const requestIdField = z.object({ requestId: z.string().min(1) });
+
+const roomReqEnvelope = roomReqSchema.merge(requestIdField);
+const messageSendEnvelope = messageSendSchema.merge(requestIdField);
 
 interface InstallChatOptions {
     nsp: Namespace<ClientToServerEvents, ServerToClientEvents>;
-    dedupStore: DedupStore;
+    dedupStore: IDedupStore;
     rateLimiter: RateLimiter;
 }
 
@@ -26,99 +32,69 @@ export const installChatHandlers = ({
             "chat namespace connected",
         );
 
-        const checkDedup = <TPayload, TAckData>(
-            payload: RequestEnvelope<TPayload>,
-            ack: AckCallback<TAckData>,
-        ): boolean => {
-            if (!payload?.requestId) {
-                ack({
-                    ok: false,
-                    error: { code: eErrorCode.INVALID_INPUT, message: "requestId is required" },
-                });
-                return false;
-            }
-            if (dedupStore.isDuplicate(socket.id, payload.requestId)) {
-                ack({
-                    ok: false,
-                    error: { code: eErrorCode.DUPLICATE_REQUEST, message: "duplicate request" },
-                });
-                return false;
-            }
-            dedupStore.register(socket.id, payload.requestId);
-            return true;
-        };
-
-        socket.on(eClientToServerEvents.ROOM_JOIN, (payload, ack) => {
-            if (!checkDedup(payload, ack)) return;
-            const { roomId } = payload;
-            if (!roomId) {
-                ack({
-                    ok: false,
-                    error: { code: eErrorCode.ROOM_REQUIRED, message: "roomId is required" },
-                });
-                return;
-            }
-            socket.join(roomId);
+        socket.on(eClientToServerEvents.ROOM_JOIN, async (rawPayload, ack) => {
+            const validated = await validateAndDedup(
+                socket.id,
+                rawPayload,
+                roomReqEnvelope,
+                ack,
+                dedupStore,
+            );
+            if (!validated) return;
+            socket.join(validated.roomId);
             ack({ ok: true, data: undefined });
         });
 
-        socket.on(eClientToServerEvents.ROOM_LEAVE, (payload, ack) => {
-            if (!checkDedup(payload, ack)) return;
-            const { roomId } = payload;
-            if (!roomId) {
-                ack({
-                    ok: false,
-                    error: { code: eErrorCode.ROOM_REQUIRED, message: "roomId is required" },
-                });
-                return;
-            }
-            socket.leave(roomId);
+        socket.on(eClientToServerEvents.ROOM_LEAVE, async (rawPayload, ack) => {
+            const validated = await validateAndDedup(
+                socket.id,
+                rawPayload,
+                roomReqEnvelope,
+                ack,
+                dedupStore,
+            );
+            if (!validated) return;
+            socket.leave(validated.roomId);
             ack({ ok: true, data: undefined });
         });
 
-        socket.on(eClientToServerEvents.MESSAGE_SEND, (payload, ack) => {
-            if (!rateLimiter.consume(socket.id, eClientToServerEvents.MESSAGE_SEND)) {
-                ack({
-                    ok: false,
-                    error: {
-                        code: eErrorCode.INTERNAL_ERROR,
-                        message: "rate limit exceeded",
-                    },
-                });
-                return;
-            }
-            if (!checkDedup(payload, ack)) return;
+        socket.on(eClientToServerEvents.MESSAGE_SEND, async (rawPayload, ack) => {
+            if (!consumeRate(rateLimiter, socket.id, eClientToServerEvents.MESSAGE_SEND, ack)) return;
 
-            const { roomId, message } = payload;
+            const validated = await validateAndDedup(
+                socket.id,
+                rawPayload,
+                messageSendEnvelope,
+                ack,
+                dedupStore,
+            );
+            if (!validated) return;
+
             const userId = authenticatedUserId;
-            const trimmedMessage = message?.trim() ?? "";
-
-            if (!roomId || !trimmedMessage) {
-                ack({
-                    ok: false,
-                    error: {
-                        code: eErrorCode.INVALID_INPUT,
-                        message: "roomId and message are required",
-                    },
-                });
-                return;
-            }
-
-            const timestamp = new Date().toISOString();
-            const messageId = randomUUID();
-
-            nsp.to(roomId).emit(eServerToClientEvents.MESSAGE_NEW, {
-                roomId,
+            const persisted = await createMessage({
+                roomId: validated.roomId,
                 userId,
-                message: trimmedMessage,
-                timestamp,
+                content: validated.message,
             });
 
-            ack({ ok: true, data: { messageId, timestamp } });
+            nsp.to(validated.roomId).emit(eServerToClientEvents.MESSAGE_NEW, {
+                roomId: validated.roomId,
+                userId,
+                message: persisted.content,
+                timestamp: persisted.createdAt.toISOString(),
+            });
+
+            ack({
+                ok: true,
+                data: {
+                    messageId: persisted.id,
+                    timestamp: persisted.createdAt.toISOString(),
+                },
+            });
         });
 
-        socket.on("disconnect", () => {
-            dedupStore.remove(socket.id);
+        socket.on("disconnect", async () => {
+            await dedupStore.remove(socket.id);
             rateLimiter.removeSocket(socket.id);
         });
     });

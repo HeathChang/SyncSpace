@@ -1,0 +1,76 @@
+// SyncSpace 데이터 영속화 스키마.
+// - SQLite (개발/학습) 또는 PostgreSQL (프로덕션) 모두 지원.
+// - DATABASE_URL 환경변수로 전환.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String         @id
+  name         String
+  passwordHash String
+  createdAt    DateTime       @default(now())
+  messages     Message[]
+  notifications Notification[] @relation("UserNotifications")
+  assignedCards BoardCard[]   @relation("AssignedCards")
+}
+
+model Room {
+  id           String      @id
+  name         String
+  description  String
+  memberCount  Int         @default(0)
+  createdAt    DateTime    @default(now())
+  messages     Message[]
+  cards        BoardCard[]
+}
+
+model Message {
+  id        String   @id @default(uuid())
+  roomId    String
+  userId    String
+  content   String
+  createdAt DateTime @default(now())
+
+  room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([roomId, createdAt])
+}
+
+model BoardCard {
+  id         String   @id
+  roomId     String
+  title      String
+  assigneeId String
+  column     String   // "todo" | "inProgress" | "done"
+  tags       String   // JSON-encoded string array (SQLite 호환)
+  updatedAt  DateTime @default(now()) @updatedAt
+  createdAt  DateTime @default(now())
+
+  room     Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  assignee User @relation("AssignedCards", fields: [assigneeId], references: [id])
+
+  @@index([roomId])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  kind      String   // "board:assigned" | "board:mentioned" | "system:info"
+  title     String
+  body      String
+  meta      String?  // JSON-encoded
+  createdAt DateTime @default(now())
+  readAt    DateTime?
+
+  user User @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}

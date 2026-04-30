@@ -1,15 +1,22 @@
 import type { Server } from "socket.io";
 import { eClientToServerEvents, eServerToClientEvents } from "../socket.types";
 import type { ClientToServerEvents, ServerToClientEvents } from "../socket.types";
-import type { AckCallback, RequestEnvelope } from "../socket.envelope";
-import { eErrorCode } from "../socket.envelope";
-import { DedupStore } from "../dedup-store";
+import type { IDedupStore } from "../storage/dedup-interface";
 import { NotificationStore } from "../notification/notification-store";
 import { logger } from "../logger";
+import { validateAndDedup } from "./handler-utils";
+import { userJoinSchema, notificationReadSchema } from "../schemas/event-schemas";
+import { z } from "zod";
+import { eErrorCode } from "../socket.envelope";
+
+const userJoinEnvelope = userJoinSchema.extend({ requestId: z.string().min(1) });
+const notificationReadEnvelope = notificationReadSchema.extend({
+    requestId: z.string().min(1),
+});
 
 interface InstallMainOptions {
     io: Server<ClientToServerEvents, ServerToClientEvents>;
-    dedupStore: DedupStore;
+    dedupStore: IDedupStore;
     notificationStore: NotificationStore;
     userRoom: (userId: string) => string;
 }
@@ -58,30 +65,15 @@ export const installMainHandlers = ({
 
         socket.join(userRoom(authenticatedUserId));
 
-        const checkDedup = <TPayload, TAckData>(
-            payload: RequestEnvelope<TPayload>,
-            ack: AckCallback<TAckData>,
-        ): boolean => {
-            if (!payload?.requestId) {
-                ack({
-                    ok: false,
-                    error: { code: eErrorCode.INVALID_INPUT, message: "requestId is required" },
-                });
-                return false;
-            }
-            if (dedupStore.isDuplicate(socket.id, payload.requestId)) {
-                ack({
-                    ok: false,
-                    error: { code: eErrorCode.DUPLICATE_REQUEST, message: "duplicate request" },
-                });
-                return false;
-            }
-            dedupStore.register(socket.id, payload.requestId);
-            return true;
-        };
-
-        socket.on(eClientToServerEvents.USER_JOIN, (payload, ack) => {
-            if (!checkDedup(payload, ack)) return;
+        socket.on(eClientToServerEvents.USER_JOIN, async (rawPayload, ack) => {
+            const validated = await validateAndDedup(
+                socket.id,
+                rawPayload,
+                userJoinEnvelope,
+                ack,
+                dedupStore,
+            );
+            if (!validated) return;
 
             const userId = authenticatedUserId;
             const userName = (socket.data.userName as string | undefined) ?? userId;
@@ -105,26 +97,30 @@ export const installMainHandlers = ({
             const onlineUserIds = getOnlineUserIds();
             socket.emit(eServerToClientEvents.PRESENCE_SNAPSHOT, { userIds: onlineUserIds });
 
-            const notifications = notificationStore.listForUser(userId);
+            const notifications = await notificationStore.listForUser(userId);
+            const unreadCount = await notificationStore.unreadCount(userId);
             socket.emit(eServerToClientEvents.NOTIFICATION_SNAPSHOT, {
                 notifications,
-                unreadCount: notificationStore.unreadCount(userId),
+                unreadCount,
             });
 
             ack({ ok: true, data: { userIds: onlineUserIds, userId, name: userName } });
         });
 
-        socket.on(eClientToServerEvents.NOTIFICATION_READ, (payload, ack) => {
-            if (!checkDedup(payload, ack)) return;
-            const { notificationId } = payload;
-            if (!notificationId) {
-                ack({
-                    ok: false,
-                    error: { code: eErrorCode.INVALID_INPUT, message: "notificationId is required" },
-                });
-                return;
-            }
-            const ok = notificationStore.markRead(authenticatedUserId, notificationId);
+        socket.on(eClientToServerEvents.NOTIFICATION_READ, async (rawPayload, ack) => {
+            const validated = await validateAndDedup(
+                socket.id,
+                rawPayload,
+                notificationReadEnvelope,
+                ack,
+                dedupStore,
+            );
+            if (!validated) return;
+
+            const ok = await notificationStore.markRead(
+                authenticatedUserId,
+                validated.notificationId,
+            );
             if (!ok) {
                 ack({
                     ok: false,
@@ -135,10 +131,13 @@ export const installMainHandlers = ({
             ack({ ok: true, data: undefined });
         });
 
-        socket.on("disconnect", () => {
+        socket.on("disconnect", async () => {
             const removed = removeUserSocket(socket.id);
-            dedupStore.remove(socket.id);
-            logger.info({ socketId: socket.id, userId: authenticatedUserId }, "main namespace disconnected");
+            await dedupStore.remove(socket.id);
+            logger.info(
+                { socketId: socket.id, userId: authenticatedUserId },
+                "main namespace disconnected",
+            );
 
             if (removed.userId && removed.isNowOffline) {
                 socket.broadcast.emit(eServerToClientEvents.USER_OFFLINE, {

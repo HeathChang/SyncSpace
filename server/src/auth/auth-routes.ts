@@ -9,7 +9,7 @@ const COOKIE_SECURE = process.env.NODE_ENV === "production";
 
 export const authRouter: Router = Router();
 
-authRouter.post("/login", (req: Request, res: Response) => {
+authRouter.post("/login", async (req: Request, res: Response) => {
     const body = (req.body ?? {}) as { userId?: unknown; password?: unknown };
     const userId = typeof body.userId === "string" ? body.userId : undefined;
     const password = typeof body.password === "string" ? body.password : undefined;
@@ -19,7 +19,7 @@ authRouter.post("/login", (req: Request, res: Response) => {
         return;
     }
 
-    const user = findUserByCredentials(userId, password);
+    const user = await findUserByCredentials(userId, password);
     if (!user) {
         res.status(401).json({ ok: false, error: "invalid credentials" });
         return;
